@@ -5,11 +5,10 @@ import time
 import os
 
 # ==========================================
-# 1. LxU 专属提炼指令 (已整合你的全套策略)
+# 1. LxU 专属提炼指令 (已整合你的全套 7 大维度策略)
 # ==========================================
 SYSTEM_PROMPT = "你是一个精通韩国 Coupang 运营的 SEO 专家，品牌名为 LxU。"
 
-# 任务指令：直接包含你之前提供的完整业务逻辑
 ANALYSIS_TASK = """
 第一，我是一个在韩国做coupang平台的跨境电商卖家，这是我的产品详情页，我现在需要后台找出20个产品关键词输入到后台以便让平台快速准确的为我的产品打上准确的标签匹配流量。请帮我找到或者推测出这些符合本地搜索习惯的韩文关键词。在分析产品的同时也综合考虑推荐商品中类似产品的标题挖掘关键词（需要20个后台设置的关键词，不包含品牌词）
 输出要求：
@@ -36,71 +35,86 @@ ANALYSIS_TASK = """
 """
 
 # ==========================================
-# 2. 页面配置与私密保护
+# 2. 页面配置与 Secrets 静默调用
 # ==========================================
-st.set_page_config(page_title="LxU 关键词提炼工具", layout="wide")
-st.title("🔍 LxU 关键词提炼与广告策略工具")
+st.set_page_config(page_title="LxU 关键词提炼工具-Gemini Pro 版", layout="wide")
+st.title("🛡️ LxU 关键词提炼与广告策略工具 (Gemini 1.5 Pro)")
 
-# --- 保护 1：后台读取 API Key ---
-# 程序会静默查找 Streamlit Cloud 后台 Secrets 里的 Key
+# --- 核心：默认调用后台 Secrets 里的 Key ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 if not api_key:
-    st.error("⚠️ 未检测到 API Key！请去 Streamlit Cloud 控制台的 Settings -> Secrets 填入 GEMINI_API_KEY。")
+    st.error("⚠️ 未在后台检测到 GEMINI_API_KEY，请在 Settings -> Secrets 配置。")
     st.stop()
 
-# 配置 Gemini
+# 配置 API 
 genai.configure(api_key=api_key)
 
 # ==========================================
 # 3. 运行界面
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 运行参数")
-    wait_time = st.slider("每个文件处理间隔(秒)", 10, 60, 25)
-    st.info("已通过 Secrets 加密连接至 Gemini 3.1 Pro 引擎")
+    st.header("⚙️ 引擎状态")
+    st.success("✅ 已通过 Secrets 加密连接")
+    st.info("当前引擎：Gemini 1.5 Pro")
+    st.markdown("---")
+    wait_time = st.slider("处理间隔(秒)", 10, 60, 25)
+    st.write("提示：Pro 模型分析较深，建议间隔保持 25s 以上。")
 
+# 文件上传
 files = st.file_uploader("上传 PDF 或详情页长图", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if files and st.button("🚀 开始批量深度提炼"):
-    # 使用 1.5 Pro 模型确保长图识别的深度
-    model = genai.GenerativeModel(model_name="gemini-1.5-pro", system_instruction=SYSTEM_PROMPT)
-    
-    results = []
-    bar = st.progress(0)
-    
-    for i, file in enumerate(files):
-        bar.progress((i + 1) / len(files))
-        st.subheader(f"📄 正在分析：{file.name}")
+    # 强制调用 Gemini 1.5 Pro 模型
+    try:
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-pro", 
+            system_instruction=SYSTEM_PROMPT
+        )
         
-        # 临时存储处理
-        temp_name = f"temp_{file.name}"
-        with open(temp_name, "wb") as f:
-            f.write(file.getbuffer())
+        results = []
+        bar = st.progress(0)
         
-        try:
-            # 上传并生成内容
-            gen_file = genai.upload_file(path=temp_name)
-            response = model.generate_content([gen_file, ANALYSIS_TASK])
+        for i, file in enumerate(files):
+            bar.progress((i + 1) / len(files))
+            st.subheader(f"📊 正在深度解析：{file.name}")
             
-            # 实时显示结果
-            st.markdown(response.text)
-            results.append({"文件名": file.name, "分析报告": response.text})
+            temp_name = f"temp_{file.name}"
+            with open(temp_name, "wb") as f:
+                f.write(file.getbuffer())
             
-            # 排队逻辑：避免触发免费版 API 限速
-            if i < len(files) - 1:
-                time.sleep(wait_time)
+            try:
+                with st.spinner('Gemini 1.5 Pro 正在分析详情页...'):
+                    # 上传文件
+                    gen_file = genai.upload_file(path=temp_name)
+                    
+                    # 轮询检查文件是否上传并处理完毕
+                    while gen_file.state.name == "PROCESSING":
+                        time.sleep(2)
+                        gen_file = genai.get_file(gen_file.name)
+                    
+                    # 生成内容
+                    response = model.generate_content([gen_file, ANALYSIS_TASK])
                 
-        except Exception as e:
-            st.error(f"处理 {file.name} 时出错: {str(e)}")
-        finally:
-            if os.path.exists(temp_name):
-                os.remove(temp_name)
+                # 直接展示深度分析结果
+                st.markdown(response.text)
+                results.append({"文件名": file.name, "分析结果": response.text})
+                
+                # 排队逻辑
+                if i < len(files) - 1:
+                    time.sleep(wait_time)
+                    
+            except Exception as e:
+                st.error(f"处理 {file.name} 出错: {str(e)}")
+            finally:
+                if os.path.exists(temp_name):
+                    os.remove(temp_name)
 
-    # 汇总导出
-    if results:
-        st.success("✅ 批量任务全部完成！")
-        df = pd.DataFrame(results)
-        df.to_excel("LxU_Final_Results.xlsx", index=False)
-        with open("LxU_Final_Results.xlsx", "rb") as f:
-            st.download_button("📥 下载全量 Excel 提炼报告", f, file_name="LxU_提炼报告汇总.xlsx")
+        if results:
+            st.success("✅ 所有产品提炼完成！")
+            df = pd.DataFrame(results)
+            df.to_excel("LxU_Pro_Results.xlsx", index=False)
+            with open("LxU_Pro_Results.xlsx", "rb") as f:
+                st.download_button("📥 导出全量 Excel 报告", f, file_name="LxU_分析结果汇总.xlsx")
+    except Exception as e:
+        st.error(f"模型初始化失败: {e}")
