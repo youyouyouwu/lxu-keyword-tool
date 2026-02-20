@@ -37,8 +37,8 @@ ANALYSIS_TASK = """
 # ==========================================
 # 2. 页面配置与 Secrets 静默调用
 # ==========================================
-st.set_page_config(page_title="LxU 关键词提炼工具-Gemini Pro 版", layout="wide")
-st.title("🛡️ LxU 关键词提炼与广告策略工具 (Pro 版)")
+st.set_page_config(page_title="LxU 关键词提炼工具-极速版", layout="wide")
+st.title("⚡ LxU 关键词提炼与广告策略工具 (极速版)")
 
 # --- 核心：默认调用后台 Secrets 里的 Key ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
@@ -56,19 +56,19 @@ genai.configure(api_key=api_key)
 with st.sidebar:
     st.header("⚙️ 引擎状态")
     st.success("✅ 已通过 Secrets 加密连接")
-    st.info("当前引擎：Gemini 1.5 Pro")
+    st.info("当前引擎：Gemini 1.5 Flash")
     st.markdown("---")
-    wait_time = st.slider("处理间隔(秒)", 10, 60, 25)
-    st.write("提示：处理 20MB+ 大文件时，请保持间隔 >25s。")
+    wait_time = st.slider("处理间隔(秒)", 5, 60, 15)
+    st.write("提示：Flash 引擎速度极快，间隔可缩短至 15s。")
 
 # 文件上传
 files = st.file_uploader("上传 PDF 或详情页长图", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if files and st.button("🚀 开始批量深度提炼"):
-    # 修正模型名称为 gemini-1.5-pro-latest 以解决 404 报错
+    # 更换为绝对不会报错的 flash 模型
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-pro-latest", 
+            model_name="gemini-1.5-flash", 
             system_instruction=SYSTEM_PROMPT
         )
         
@@ -77,14 +77,14 @@ if files and st.button("🚀 开始批量深度提炼"):
         
         for i, file in enumerate(files):
             bar.progress((i + 1) / len(files))
-            st.subheader(f"📊 正在深度解析：{file.name}")
+            st.subheader(f"📊 正在急速解析：{file.name}")
             
             temp_name = f"temp_{file.name}"
             with open(temp_name, "wb") as f:
                 f.write(file.getbuffer())
             
             try:
-                with st.spinner('Gemini Pro 正在扫描大文件，请稍候...'):
+                with st.spinner('⚡ Gemini Flash 正在读取详情页，请稍候...'):
                     # 针对大文件的上传处理
                     gen_file = genai.upload_file(path=temp_name)
                     
@@ -113,8 +113,8 @@ if files and st.button("🚀 开始批量深度提炼"):
         if results:
             st.success("✅ 所有产品提炼完成！")
             df = pd.DataFrame(results)
-            df.to_excel("LxU_Pro_Results.xlsx", index=False)
-            with open("LxU_Pro_Results.xlsx", "rb") as f:
+            df.to_excel("LxU_Flash_Results.xlsx", index=False)
+            with open("LxU_Flash_Results.xlsx", "rb") as f:
                 st.download_button("📥 导出全量 Excel 报告", f, file_name="LxU_分析结果汇总.xlsx")
     except Exception as e:
         st.error(f"模型初始化失败: {e}")
