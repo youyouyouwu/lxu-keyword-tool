@@ -38,7 +38,7 @@ ANALYSIS_TASK = """
 # 2. 页面配置与 Secrets 静默调用
 # ==========================================
 st.set_page_config(page_title="LxU 关键词提炼工具-Gemini Pro 版", layout="wide")
-st.title("🛡️ LxU 关键词提炼与广告策略工具 (Gemini 1.5 Pro)")
+st.title("🛡️ LxU 关键词提炼与广告策略工具 (Pro 版)")
 
 # --- 核心：默认调用后台 Secrets 里的 Key ---
 api_key = st.secrets.get("GEMINI_API_KEY", None)
@@ -59,16 +59,16 @@ with st.sidebar:
     st.info("当前引擎：Gemini 1.5 Pro")
     st.markdown("---")
     wait_time = st.slider("处理间隔(秒)", 10, 60, 25)
-    st.write("提示：Pro 模型分析较深，建议间隔保持 25s 以上。")
+    st.write("提示：处理 20MB+ 大文件时，请保持间隔 >25s。")
 
 # 文件上传
 files = st.file_uploader("上传 PDF 或详情页长图", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if files and st.button("🚀 开始批量深度提炼"):
-    # 强制调用 Gemini 1.5 Pro 模型
+    # 修正模型名称为 gemini-1.5-pro-latest 以解决 404 报错
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-pro", 
+            model_name="gemini-1.5-pro-latest", 
             system_instruction=SYSTEM_PROMPT
         )
         
@@ -84,8 +84,8 @@ if files and st.button("🚀 开始批量深度提炼"):
                 f.write(file.getbuffer())
             
             try:
-                with st.spinner('Gemini 1.5 Pro 正在分析详情页...'):
-                    # 上传文件
+                with st.spinner('Gemini Pro 正在扫描大文件，请稍候...'):
+                    # 针对大文件的上传处理
                     gen_file = genai.upload_file(path=temp_name)
                     
                     # 轮询检查文件是否上传并处理完毕
