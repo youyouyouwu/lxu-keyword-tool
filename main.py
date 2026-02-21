@@ -8,7 +8,6 @@ import requests
 import hashlib
 import hmac
 import base64
-import concurrent.futures  # 🚀 新增：多线程并发加速库！
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -69,9 +68,7 @@ PROMPT_STEP_1 = """
 
 第四部分：提供一个产品韩语名称用于内部管理（附带中文翻译）。
 
-第五部分：按照产品卖点撰写10条商品韩文好评。
-1. 先以 Markdown 表格形式排列：【序号 | 韩文评价原文 | 纯中文翻译 | 买家痛点分析】。
-2. 表格下方，将这10条纯韩文评价原文按行隔开，单独放在 ``` 代码块中输出，方便一键复制。
+第五部分：按照产品卖点撰写5条商品韩文好评。必须以 Markdown 表格形式排列：【序号 | 韩文评价原文 | 纯中文翻译 | 买家痛点分析】。
 
 第六部分：AI 主图生成建议：基于场景词用纯中文建议背景和构图。
 
@@ -101,14 +98,14 @@ PROMPT_STEP_3 = """
 
 【强制表格骨架】：
 请你**严格照抄**以下表格结构进行输出！必须按三大分类的顺序展示，且每个分类内部按“月总搜索量”降序排列！
-| 序号 | 广告组分类 | 相关性评分 | 韩文关键词 | 月总搜索量 | 中文翻译 | 竞争度 | 推荐策略与说明 |
+| 序号 | 广告组分类 | 韩文关键词 | 相关性评分 | 月总搜索量 | 中文翻译 | 竞争度 | 推荐策略与说明 |
 |---|---|---|---|---|---|---|---|
-| 1 | 核心出单词 | 1 | (大词/原词) | ... | ... | ... | ... |
-| ... | 核心出单词 | 1 | ... | ... | ... | ... |
-| 20 | 精准长尾词 | 2 | (带属性的长尾词) | ... | ... | ... | ... |
-| ... | 精准长尾词 | 2 | ... | ... | ... | ... |
-| 40 | 捡漏与痛点组 | 3 | (场景/竞品/错别字) | ... | ... | ... | ... |
-| ... | 捡漏与痛点组 | 3 | ... | ... | ... | ... |
+| 1 | 核心出单词 | (大词/原词) | 1 | ... | ... | ... | ... |
+| ... | 核心出单词 | ... | 1 | ... | ... | ... | ... |
+| 20 | 精准长尾词 | (带属性的长尾词) | 2 | ... | ... | ... | ... |
+| ... | 精准长尾词 | ... | 2 | ... | ... | ... | ... |
+| 40 | 捡漏与痛点组 | (场景/竞品/错别字) | 3 | ... | ... | ... | ... |
+| ... | 捡漏与痛点组 | ... | 3 | ... | ... | ... | ... |
 
 第三步：否定关键词列表 (Negative Keywords)
 - 建议屏蔽的词：[用逗号隔开，从数据中挑出那些触碰红线、无购物意图的垃圾拓展词。必须至少列出 10 个真实的过滤词！]
@@ -116,7 +113,7 @@ PROMPT_STEP_3 = """
 """
 
 # ==========================================
-# 2. Naver 数据抓取函数 (🚀 升级为 5 倍速并发版)
+# 2. Naver 数据抓取函数
 # ==========================================
 def clean_for_api(keyword: str) -> str:
     return re.sub(r"\s+", "", keyword)
@@ -141,21 +138,21 @@ def normalize_count(raw):
 def fetch_naver_data(main_keywords, pb, st_text):
     all_rows = []
     total = len(main_keywords)
-
-    # 抽取单次查询逻辑
-    def fetch_single(mk):
-        rows = []
+    for i, mk in enumerate(main_keywords, start=1):
+        st_text.text(f"📊 Naver 拓词查询进度 [{i}/{total}]: {mk}")
+        pb.progress(i / total)
         try:
             timestamp = str(int(time.time() * 1000))
             sig = make_signature("GET", "/keywordstool", timestamp)
             headers = {"X-Timestamp": timestamp, "X-API-KEY": NAVER_API_KEY, "X-Customer": NAVER_CUSTOMER_ID, "X-Signature": sig}
-            res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1}, timeout=8)
+            res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1})
             if res.status_code == 200:
                 data = res.json()
                 for item in data.get("keywordList", []): 
                     pc = normalize_count(item.get("monthlyPcQcCnt", 0))
                     mob = normalize_count(item.get("monthlyMobileQcCnt", 0))
-                    rows.append({
+                    
+                    all_rows.append({
                         "Naver实际搜索词": item.get("relKeyword", ""),
                         "月总搜索量": pc + mob,
                         "竞争度": item.get("compIdx", "-"),
@@ -163,24 +160,8 @@ def fetch_naver_data(main_keywords, pb, st_text):
                     })
         except Exception:
             pass
-        return rows
-
-    completed = 0
-    # 🚀 使用多线程并发，同时开 5 个通道查词，速度飙升！
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_mk = {executor.submit(fetch_single, mk): mk for mk in main_keywords}
-        for future in concurrent.futures.as_completed(future_to_mk):
-            mk = future_to_mk[future]
-            completed += 1
-            # UI 实时更新
-            st_text.text(f"📊 Naver 极速并发拓词中 [{completed}/{total}]: {mk}")
-            pb.progress(completed / total)
-            try:
-                all_rows.extend(future.result())
-            except Exception:
-                pass
-            time.sleep(0.05) # 极短暂防拥堵缓冲，比之前的 1 秒快了 20 倍
-            
+        time.sleep(1) # API 频率保护
+        
     df = pd.DataFrame(all_rows)
     if not df.empty:
         df = df.drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
@@ -189,7 +170,7 @@ def fetch_naver_data(main_keywords, pb, st_text):
 # ==========================================
 # 3. 主 UI 与全自动工作流
 # ==========================================
-st.title("⚡ LxU 自动化测品工厂 (极速并发版)")
+st.title("⚡ LxU 自动化测品工厂 (终极逻辑版)")
 st.info("💡 提示：如果遇到额度耗尽，请稍作等待，或手动在 Secrets 中更换 API Key。")
 
 # 清理缓存按钮
