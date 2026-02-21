@@ -30,7 +30,7 @@ SECRET_KEY_BYTES = NAVER_SECRET_KEY.encode("utf-8")
 NAVER_API_URL = "https://api.searchad.naver.com/keywordstool"
 
 # ==========================================
-# 1. 核心指令 (🚀 大道至简：无标点、自然通顺)
+# 1. 核心指令
 # ==========================================
 PROMPT_STEP_1 = """
 你是一个在韩国市场拥有多年实战经验的电商运营专家，熟悉 Coupang 与 Naver SmartStore 的搜索机制和用户点击行为。你的整个运营团队都在中国，所以你必须遵守以下极其严格的【语言输出隔离规范】：
@@ -43,8 +43,8 @@ PROMPT_STEP_1 = """
 【品牌与通用规则】：
 - 品牌名全部默认固定为：LxU
 - 严禁使用夸张营销词（如 최고, 1위, 완벽 等）。
-- 标题中【绝对严禁使用任何标点符号】（如逗号、斜杠、加号、破折号等一律禁止），词与词之间只能用空格隔开。
-- 标题必须【语句通顺、自然】，符合真实的韩国本土买家搜索和阅读习惯，不要生硬地拼凑词汇或强行造词。
+- 标题中【绝对不要使用任何标点符号】，词语之间用空格自然隔开即可。
+- 标题必须【语句通顺自然】，符合真实韩国本土买家的搜索和阅读习惯。
 
 【💡 极度重要排版要求：一键复制功能】：
 你生成的“纯韩文逗号隔开的后台关键词”以及“纯韩文评价”，必须单独放在 Markdown 代码块里面！
@@ -77,14 +77,15 @@ PROMPT_STEP_1 = """
 第六部分：AI 主图生成建议：基于场景词用纯中文建议背景和构图。
 
 【程序读取专属指令 - 极度重要】：
-将上述所有生成的【韩文关键词】进行全面去重汇总，单列纵向列表输出，并且**必须放在以下两个标记之间**！每行只写一个韩文关键词，尽量不要带中文或序号。
+将上述所有生成的【韩文关键词】进行全面去重汇总，单列横向输出，并且**必须放在以下两个标记之间**！
+⚠️ 警告：这里的关键词之间【必须使用英文逗号 (,) 隔开】！绝对不允许只用空格连在一起！
 [LXU_KEYWORDS_START]
-(在这里填入去重后的纯韩文关键词)
+关键词1,关键词2,关键词3
 [LXU_KEYWORDS_END]
 """
 
 PROMPT_STEP_3 = """
-【以下是市场核心搜索词及拓展词真实流量数据（按搜索量降序排列）】：
+【以下是市场核心搜索词及拓展词真实流量数据】：
 {market_data}
 
 =======================================================
@@ -194,7 +195,15 @@ def fetch_naver_data(main_keywords, pb, st_text):
             
     df = pd.DataFrame(all_rows)
     if not df.empty:
-        df = df.drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
+        df = df.drop_duplicates(subset=["Naver实际搜索词"])
+        
+        # 🚀 核心优化：打标签并强行置顶“原词”
+        df['is_seed'] = df['Naver实际搜索词'].isin(main_keywords)
+        df.insert(1, '词组属性', df['is_seed'].apply(lambda x: '🎯 目标原词' if x else '💡 衍生拓展词'))
+        # 排序：是原词的在上面，然后再按搜索量从大到小
+        df = df.sort_values(by=["is_seed", "月总搜索量"], ascending=[False, False])
+        df = df.drop(columns=['is_seed'])
+        
     return df
 
 # ==========================================
@@ -225,7 +234,6 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         temp_path = f"temp_{file.name}"
         with open(temp_path, "wb") as f: f.write(file.getbuffer())
         
-        # 定义存储返回结果的变量，防崩溃保护
         res1_text = ""
         res3_text = ""
         kw_list = []
@@ -249,20 +257,20 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 with st.expander("👉 查看第一步完整报告 (已强制纯中文隔离)", expanded=False):
                     st.write(res1_text)
                 
-                # 强化版韩文长尾词提取（保留空格）
                 match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1_text, re.DOTALL | re.IGNORECASE)
                 if match:
                     raw_block = match.group(1)
-                    raw_block = re.sub(r'[,，]', '\n', raw_block)
-                    for line in raw_block.split('\n'):
-                        clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                    raw_block = re.sub(r'[，\n、|]', ',', raw_block) 
+                    for kw in raw_block.split(','):
+                        clean_word = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', kw).strip()
                         clean_word = re.sub(r'\s+', ' ', clean_word)
                         if clean_word and clean_word not in kw_list:
                             kw_list.append(clean_word)
                 else:
                     tail_text = res1_text[-800:]
-                    for line in tail_text.split('\n'):
-                        clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                    tail_text = re.sub(r'[，\n、|]', ',', tail_text)
+                    for kw in tail_text.split(','):
+                        clean_word = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', kw).strip()
                         clean_word = re.sub(r'\s+', ' ', clean_word)
                         if clean_word and clean_word not in kw_list:
                             kw_list.append(clean_word)
@@ -296,11 +304,14 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         # ------------------ 第三步：自动触发终极策略推演 ------------------
         with st.status("🧠 第三步：主客观数据融合，生成终极策略 (自动跳转)...", expanded=True) as s3:
             try:
-                # 分离原词和拓展词，确保第一步的原词存活
+                # 🚀 核心优化：原词和拓展词分别独立排序，拼合后原词永远在文件最上方！
                 seed_df = df_market[df_market["Naver实际搜索词"].isin(kw_list)]
                 expanded_df = df_market[~df_market["Naver实际搜索词"].isin(kw_list)].head(250)
                 
-                final_df = pd.concat([seed_df, expanded_df]).drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
+                final_df = pd.concat([
+                    seed_df.sort_values(by="月总搜索量", ascending=False), 
+                    expanded_df.sort_values(by="月总搜索量", ascending=False)
+                ]).drop_duplicates(subset=["Naver实际搜索词"])
                 
                 market_csv = final_df.to_csv(index=False)
                 final_prompt = PROMPT_STEP_3.format(market_data=market_csv)
@@ -325,10 +336,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             pass
             
         try:
-            # 1. 组装最终的 TXT 长文本报告
             final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1_text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量 (精炼合集)]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3_text
             
-            # 2. Markdown 表格智能提取函数
             def parse_md_table(md_text, keyword):
                 lines = md_text.split('\n')
                 table_data = []
@@ -358,11 +367,9 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
                 return pd.DataFrame()
 
-            # 📌 Sheet 1：登品标题精准提取
             raw_titles = []
             for line in res1_text.split('\n'):
                 line_clean = line.strip()
-                # 必须包含LxU，且绝不包含这些干扰词
                 if 'LxU' in line_clean and not any(x in line_clean for x in ['公式', '规则', '卖点', '核心词', '翻译', '中文']):
                     clean_t = re.sub(r'```[a-zA-Z]*', '', line_clean)
                     clean_t = clean_t.strip('`*>- \t')
@@ -389,11 +396,9 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 "提炼内容": [coupang_title, coupang_kws, naver_title, naver_kws]
             })
 
-            # 📌 Sheet 2 & 3：提取表格
             df_comments = parse_md_table(res1_text, "韩文评价原文")
             df_ads = parse_md_table(res3_text, "广告组分类")
 
-            # 3. 写入内存 Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                 df_sheet1.to_excel(writer, index=False, sheet_name='登品标题')
@@ -410,7 +415,6 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
 
             excel_data = excel_buffer.getvalue()
 
-            # 4. 在界面底部显示双下载按钮 (TXT 和 Excel)
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
