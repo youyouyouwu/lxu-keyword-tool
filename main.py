@@ -12,7 +12,7 @@ import base64
 # ==========================================
 # 0. 页面与 Secrets 配置
 # ==========================================
-st.set_page_config(page_title="LxU 测品工作流 (全自动版)", layout="wide")
+st.set_page_config(page_title="LxU 测品工作流 (清晰拓词版)", layout="wide")
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 NAVER_API_KEY = st.secrets.get("API_KEY")
@@ -28,7 +28,7 @@ SECRET_KEY_BYTES = NAVER_SECRET_KEY.encode("utf-8")
 NAVER_API_URL = "https://api.searchad.naver.com/keywordstool"
 
 # ==========================================
-# 1. 核心指令 (已加强纯中文隔离限制)
+# 1. 核心指令 (强制纯中文隔离限制)
 # ==========================================
 PROMPT_STEP_1 = """
 你是一个精通韩国 Coupang 运营的 SEO 专家，品牌名为 LxU。注意：你的整个运营团队都在中国，所以你必须遵守以下极其严格的【语言输出隔离规范】：
@@ -81,7 +81,7 @@ PROMPT_STEP_3 = """
 """
 
 # ==========================================
-# 2. Naver 数据抓取函数
+# 2. Naver 数据抓取函数 (恢复拓词，但优化显示结构)
 # ==========================================
 def clean_for_api(keyword: str) -> str:
     return re.sub(r"\s+", "", keyword)
@@ -107,7 +107,7 @@ def fetch_naver_data(main_keywords, pb, st_text):
     all_rows = []
     total = len(main_keywords)
     for i, mk in enumerate(main_keywords, start=1):
-        st_text.text(f"📊 Naver 查询进度 [{i}/{total}]: {mk}")
+        st_text.text(f"📊 Naver 拓词查询进度 [{i}/{total}]: {mk}")
         pb.progress(i / total)
         try:
             timestamp = str(int(time.time() * 1000))
@@ -116,23 +116,33 @@ def fetch_naver_data(main_keywords, pb, st_text):
             res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1})
             if res.status_code == 200:
                 data = res.json()
+                # 保留拓展前 8 个词的功能
                 for item in data.get("keywordList", [])[:8]: 
                     pc = normalize_count(item.get("monthlyPcQcCnt", 0))
                     mob = normalize_count(item.get("monthlyMobileQcCnt", 0))
-                    all_rows.append({"提取主词": mk, "Naver扩展词": item.get("relKeyword", ""), "总搜索量": pc + mob, "竞争度": item.get("compIdx", "-")})
+                    
+                    # 🚀 重点优化：调整字典的 Key 顺序，确保表格生成时逻辑清晰
+                    all_rows.append({
+                        "Naver实际搜索词": item.get("relKeyword", ""),
+                        "月总搜索量": pc + mob,
+                        "竞争度": item.get("compIdx", "-"),
+                        "AI溯源(原词)": mk
+                    })
         except Exception:
             pass
         time.sleep(1) # API 频率保护
+        
     df = pd.DataFrame(all_rows)
     if not df.empty:
-        df = df.drop_duplicates(subset=["Naver扩展词"]).sort_values(by="总搜索量", ascending=False)
+        # 去除重复的实际搜索词，并按搜索量从高到低排列
+        df = df.drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
     return df
 
 # ==========================================
 # 3. 主 UI 与全自动工作流
 # ==========================================
-st.title("⚡ LxU 自动化测品工厂 (一键全自动版)")
-st.info("💡 流程提示：上传产品详情页 ➡️ 自动 AI 识图提词 ➡️ 自动查询 Naver 流量 ➡️ 自动排兵布阵")
+st.title("⚡ LxU 自动化测品工厂 (全自动闭环版)")
+st.info("💡 流程提示：上传产品详情页 ➡️ 自动 AI 识图提词 ➡️ 自动查询 Naver 流量并拓词 ➡️ 自动排兵布阵")
 
 files = st.file_uploader("📥 请上传产品详情页 (PDF/PNG/JPG)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
 
@@ -178,10 +188,10 @@ if files and st.button("🚀 启动全自动闭环"):
                 
             if kw_list:
                 s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个纯正韩文词组", state="complete")
-                st.success(f"即将送往 Naver 查询的词表：{kw_list}")
+                st.success(f"即将送往 Naver 拓词查询的种子词表：{kw_list}")
             else:
                 s1.update(label="❌ 第一步提取失败，未能找到韩文", state="error")
-                continue # 提取失败直接跳过该产品
+                continue 
 
         # ------------------ 第二步：自动触发 Naver 流量回测 ------------------
         with st.status("📊 第二步：连接 Naver 获取真实搜索数据 (自动跳转)...", expanded=True) as s2:
@@ -192,10 +202,10 @@ if files and st.button("🚀 启动全自动闭环"):
             
             if not df_market.empty:
                 st.dataframe(df_market)
-                s2.update(label="✅ 第二步完成！已获取最新韩国市场客观数据", state="complete")
+                s2.update(label="✅ 第二步完成！已获取最新韩国市场客观数据 (含拓词)", state="complete")
             else:
                 s2.update(label="❌ 第二步失败，Naver 未返回有效数据", state="error")
-                continue # 没有数据无法进行第三步
+                continue 
 
         # ------------------ 第三步：自动触发终极策略推演 ------------------
         with st.status("🧠 第三步：主客观数据融合，生成终极策略 (自动跳转)...", expanded=True) as s3:
