@@ -197,10 +197,11 @@ def fetch_naver_data(main_keywords, pb, st_text):
     if not df.empty:
         df = df.drop_duplicates(subset=["Naver实际搜索词"])
         
-        # 🚀 核心优化：打标签并强行置顶“原词”
-        df['is_seed'] = df['Naver实际搜索词'].isin(main_keywords)
+        # 🚀 核心修复：无视空格强制比对，对抗 Naver 吞空格机制
+        seed_no_space = [str(k).replace(" ", "") for k in main_keywords]
+        df['is_seed'] = df['Naver实际搜索词'].apply(lambda x: str(x).replace(" ", "") in seed_no_space)
+        
         df.insert(1, '词组属性', df['is_seed'].apply(lambda x: '🎯 目标原词' if x else '💡 衍生拓展词'))
-        # 排序：是原词的在上面，然后再按搜索量从大到小
         df = df.sort_values(by=["is_seed", "月总搜索量"], ascending=[False, False])
         df = df.drop(columns=['is_seed'])
         
@@ -304,9 +305,9 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         # ------------------ 第三步：自动触发终极策略推演 ------------------
         with st.status("🧠 第三步：主客观数据融合，生成终极策略 (自动跳转)...", expanded=True) as s3:
             try:
-                # 🚀 核心优化：原词和拓展词分别独立排序，拼合后原词永远在文件最上方！
-                seed_df = df_market[df_market["Naver实际搜索词"].isin(kw_list)]
-                expanded_df = df_market[~df_market["Naver实际搜索词"].isin(kw_list)].head(250)
+                # 🚀 联动修复：基于准确打标的“词组属性”来分离原词和拓展词
+                seed_df = df_market[df_market["词组属性"] == '🎯 目标原词']
+                expanded_df = df_market[df_market["词组属性"] == '💡 衍生拓展词'].head(250)
                 
                 final_df = pd.concat([
                     seed_df.sort_values(by="月总搜索量", ascending=False), 
