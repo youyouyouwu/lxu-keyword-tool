@@ -213,6 +213,12 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         temp_path = f"temp_{file.name}"
         with open(temp_path, "wb") as f: f.write(file.getbuffer())
         
+        # 定义存储返回结果的变量，防崩溃保护
+        res1_text = ""
+        res3_text = ""
+        kw_list = []
+        market_csv = ""
+
         # ------------------ 第一步：自动识图与提取 ------------------
         with st.status("🔍 第一步：AI 视觉提炼与本地化分析...", expanded=True) as s1:
             try:
@@ -222,12 +228,13 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     gen_file = genai.get_file(gen_file.name)
                 
                 res1 = model.generate_content([gen_file, PROMPT_STEP_1])
+                res1_text = res1.text if hasattr(res1, 'text') else "第一步生成内容为空或被拦截"
+                
                 with st.expander("👉 查看第一步完整报告 (已强制纯中文隔离)", expanded=False):
-                    st.write(res1.text)
+                    st.write(res1_text)
                 
                 # 强化版韩文长尾词提取（保留空格）
-                match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1.text, re.DOTALL | re.IGNORECASE)
-                kw_list = []
+                match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1_text, re.DOTALL | re.IGNORECASE)
                 if match:
                     raw_block = match.group(1)
                     raw_block = re.sub(r'[,，]', '\n', raw_block)
@@ -237,7 +244,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         if clean_word and clean_word not in kw_list:
                             kw_list.append(clean_word)
                 else:
-                    tail_text = res1.text[-800:]
+                    tail_text = res1_text[-800:]
                     for line in tail_text.split('\n'):
                         clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
                         clean_word = re.sub(r'\s+', ' ', clean_word)
@@ -284,12 +291,15 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 final_prompt = PROMPT_STEP_3.format(market_data=market_csv)
                 
                 res3 = model.generate_content([gen_file, final_prompt])
+                res3_text = res3.text if hasattr(res3, 'text') else "第三步生成失败，未返回有效文字"
+                
                 st.markdown("### 🏆 LxU 终极测品策略报告")
-                st.success(res3.text)
+                st.success(res3_text)
                 
                 s3.update(label="✅ 第三步完成！终极排兵布阵已生成", state="complete")
             except Exception as e:
                 s3.update(label=f"❌ 第三步失败: {e}", state="error")
+                st.error("由于 API 拦截或网络超时，第三步策略报告生成中断。")
 
         # ------------------ 收尾与导出 (🚀 完美 Excel 导出升级) ------------------
         os.remove(temp_path)
@@ -299,10 +309,10 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             pass
             
         try:
-            # 1. 保留原本的 TXT 全景报告 (提供多种下载选择)
-            final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1.text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量 (精炼合集)]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3.text
+            # 1. 组装最终的 TXT 长文本报告
+            final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1_text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量 (精炼合集)]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3_text
             
-            # 2. 核心：智能解析 Markdown 表格为 DataFrame
+            # 2. Markdown 表格智能提取函数
             def parse_md_table(md_text, keyword):
                 lines = md_text.split('\n')
                 table_data = []
@@ -314,59 +324,60 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         table_data.append(line)
                         continue
                     if is_table:
-                        # 如果行里包含 | 符号，说明还在表格内；排除掉底部的分割线(---)
+                        # 只要有 | 符号且不是纯虚线分割就提取
                         if line.startswith('|') or line.endswith('|') or '|' in line:
                             if '---' not in line:
                                 table_data.append(line)
                         else:
-                            if len(line.strip()) > 0: # 遇到非表格的文字就跳出
+                            if len(line.strip()) > 0: # 遇到非表格文字跳出
                                 break
                 if not table_data:
                     return pd.DataFrame()
                 parsed_rows = []
                 for row in table_data:
                     cols = [col.strip() for col in row.split('|')]
-                    if cols and not cols[0]: cols = cols[1:]   # 去掉开头多余的空格
-                    if cols and not cols[-1]: cols = cols[:-1] # 去掉结尾多余的空格
+                    if cols and not cols[0]: cols = cols[1:]   # 清理行首空格
+                    if cols and not cols[-1]: cols = cols[:-1] # 清理行尾空格
                     parsed_rows.append(cols)
                 if len(parsed_rows) > 1:
                     return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
                 return pd.DataFrame()
 
-            # 📌 组装 Sheet 1：登品标题
-            titles = re.findall(r'(LxU[^\n]+)', res1.text)
-            coupang_title = titles[0] if len(titles) > 0 else "未提取到标准标题，请查阅TXT报告"
-            naver_title = titles[1] if len(titles) > 1 else "未提取到标准标题，请查阅TXT报告"
+            # 📌 Sheet 1：登品标题提取
+            titles = re.findall(r'(LxU[^\n]+)', res1_text)
+            coupang_title = titles[0] if len(titles) > 0 else "未提取到 Coupang 标题"
+            naver_title = titles[1] if len(titles) > 1 else "未提取到 Naver 标题"
             
             df_sheet1 = pd.DataFrame({
                 "信息维度": ["Coupang 标题", "Naver 标题", "后台搜索关键词"],
                 "提炼内容": [coupang_title, naver_title, ", ".join(kw_list)]
             })
 
-            # 📌 组装 Sheet 2：评论区内容
-            df_comments = parse_md_table(res1.text, "韩文评价原文")
+            # 📌 Sheet 2 & 3：提取表格
+            df_comments = parse_md_table(res1_text, "韩文评价原文")
+            df_ads = parse_md_table(res3_text, "广告组分类")
 
-            # 📌 组装 Sheet 3：广告投放关键词
-            df_ads = parse_md_table(res3.text, "广告组分类")
-
-            # 3. 将三个 Sheet 写入内存中的 Excel 文件
+            # 3. 写入内存 Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                # 写入 Sheet 1
                 df_sheet1.to_excel(writer, index=False, sheet_name='登品标题')
                 
+                # 写入 Sheet 2
                 if not df_comments.empty:
                     df_comments.to_excel(writer, index=False, sheet_name='评论区内容')
                 else:
-                    pd.DataFrame([{"提示": "未找到评价表格，请查阅完整 TXT"}]).to_excel(writer, index=False, sheet_name='评论区内容')
+                    pd.DataFrame([{"提示": "未找到规范的评价表格，请查阅下方TXT报告"}]).to_excel(writer, index=False, sheet_name='评论区内容')
                 
+                # 写入 Sheet 3
                 if not df_ads.empty:
                     df_ads.to_excel(writer, index=False, sheet_name='广告投放关键词')
                 else:
-                    pd.DataFrame([{"提示": "未找到广告策略表格，请查阅完整 TXT"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
+                    pd.DataFrame([{"提示": "未找到规范的广告策略表，请查阅下方TXT报告"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
 
             excel_data = excel_buffer.getvalue()
 
-            # 4. 在界面上分两列展示下载按钮（TXT 和 Excel 供你双选）
+            # 4. 在界面底部显示双下载按钮 (TXT 和 Excel)
             st.divider()
             col1, col2 = st.columns(2)
             with col1:
@@ -385,4 +396,4 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     use_container_width=True
                 )
         except Exception as e:
-            st.error(f"导出文件时发生错误: {e}")
+            st.error(f"构建导出文件时发生错误: {e}")
