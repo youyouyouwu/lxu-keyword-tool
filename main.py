@@ -208,7 +208,10 @@ if files and st.button("🚀 启动全自动闭环"):
             
             if not df_market.empty:
                 st.dataframe(df_market)
-                s2.update(label="✅ 第二步完成！已获取最新韩国市场客观数据 (含拓词)", state="complete")
+                # 🚀 这里加入了你要的统计展示功能！
+                target_count = len(kw_list)
+                derived_count = len(df_market)
+                s2.update(label=f"✅ 第二步完成！已获取最新韩国市场客观数据 (目标词：{target_count} 个 ➡️ 衍生词：{derived_count} 个)", state="complete")
             else:
                 s2.update(label="❌ 第二步失败，Naver 未返回有效数据", state="error")
                 continue 
