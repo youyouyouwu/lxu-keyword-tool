@@ -25,7 +25,7 @@ if not all([GEMINI_API_KEY, NAVER_API_KEY, NAVER_SECRET_KEY, NAVER_CUSTOMER_ID])
 
 genai.configure(api_key=GEMINI_API_KEY)
 SECRET_KEY_BYTES = NAVER_SECRET_KEY.encode("utf-8")
-NAVER_API_URL = "https://api.searchad.naver.com/keywordstool"
+NAVER_API_URL = "[https://api.searchad.naver.com/keywordstool](https://api.searchad.naver.com/keywordstool)"
 
 # ==========================================
 # 1. 核心指令 (SEO 双平台架构 + 品牌强制 LxU + 代码块复制)
@@ -78,7 +78,6 @@ PROMPT_STEP_1 = """
 [LXU_KEYWORDS_END]
 """
 
-# ================= 这里修改了第三步的表格排序逻辑 =================
 PROMPT_STEP_3 = """
 你是一位拥有10年实战经验的韩国 Coupang 跨境电商运营专家。整个团队都在中国，除韩文关键词外，所有解释分析必须用纯中文输出。
 
@@ -92,11 +91,7 @@ PROMPT_STEP_3 = """
 第二步：关键词清洗与打分 (结合流量与痛点保留核心词和捡漏词，剔除宽泛词)。
 第三步：输出二大模块
 模块一：付费广告投放策略表。
-【强制格式与排序指令】：
-1. 必须严格合并输出为一个统一的 Markdown 表格！
-2. 排序规则（极度重要）：请先按“广告组分类”进行分组排序（展示顺序依次为：核心出单词 ➡️ 精准长尾词 ➡️ 捡漏与痛点组）。
-3. 在每一个分类的内部，再严格按照“月总搜索量”从高到低进行降序排列！
-
+【强制格式指令】：必须严格合并输出为一个统一的 Markdown 表格！请将“核心出单词”、“精准长尾词”、“捡漏与痛点组”全部放入此表中，按总搜索量降序排列。
 骨架严格如下：
 | 序号 | 广告组分类 | 韩文关键词 | 月总搜索量 | 中文翻译 | 竞争度 | 推荐策略与说明 |
 |---|---|---|---|---|---|---|
@@ -179,6 +174,7 @@ if st.sidebar.button("🗑️ 清理云端垃圾文件"):
 files = st.file_uploader("📥 请上传产品详情页 (强烈建议截图，保持在2MB内)", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 
 if files and st.button("🚀 启动全自动闭环"):
+    # 再次强效锁定 1.5-flash 模型，拒绝 404
     model = genai.GenerativeModel("models/gemini-1.5-flash")
     
     for file in files:
