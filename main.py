@@ -12,7 +12,7 @@ import base64
 # ==========================================
 # 0. 页面与 Secrets 配置
 # ==========================================
-st.set_page_config(page_title="LxU 测品工作流 (强制表格版)", layout="wide")
+st.set_page_config(page_title="LxU 测品工作流", layout="wide")
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 NAVER_API_KEY = st.secrets.get("API_KEY")
@@ -27,8 +27,24 @@ genai.configure(api_key=GEMINI_API_KEY)
 SECRET_KEY_BYTES = NAVER_SECRET_KEY.encode("utf-8")
 NAVER_API_URL = "https://api.searchad.naver.com/keywordstool"
 
+# ================= 侧边栏急救包 =================
+with st.sidebar:
+    st.header("🛠️ 系统维护区")
+    st.info("如果遇到 ResourceExhausted 报错，请点击下方按钮清理垃圾文件释放空间。")
+    if st.button("🗑️ 一键清理云端积压文件"):
+        with st.spinner("正在扫描并删除 Google 云端垃圾文件..."):
+            try:
+                files = genai.list_files()
+                count = 0
+                for f in files:
+                    genai.delete_file(f.name)
+                    count += 1
+                st.success(f"✅ 清理完毕！共删除了 {count} 个卡住的历史文件！")
+            except Exception as e:
+                st.error(f"清理出错: {e}")
+
 # ==========================================
-# 1. 核心指令 (第一步彻底锁定为表格)
+# 1. 核心指令
 # ==========================================
 PROMPT_STEP_1 = """
 你是一个精通韩国 Coupang 运营的 SEO 专家，品牌名为 LxU。注意：你的整个运营团队都在中国，所以你必须遵守以下极其严格的【语言输出隔离规范】：
@@ -44,14 +60,13 @@ PROMPT_STEP_1 = """
 |---|---|---|---|
 | 1 | ... | ... | ... |
 | 2 | ... | ... | ... |
-... (依此类推，直到第20个)
 
 在表格完全输出结束后，单独换行输出一款纯韩文、逗号隔开的版本，方便在coupang后台录入。
 
 第二，找精准长尾词做付费推广（需要精准流量词，按相关性排列并打分1-5）。
 广告组一为【核心出单词】。
-广告组二为【精准长尾关键词】（尽量挖掘30个左右，包含缩写、语序颠倒、场景词、关联竞品等）。
-广告组三为【长尾捡漏组广告词】（低CPC、购买意向强、Low Traffic。包含错别字、缩写、方言等变体）。
+广告组二为【精准长尾关键词】。
+广告组三为【长尾捡漏组广告词】。
 输出格式：Markdown 表格形式，表头固定为：【序号 | 广告组分类 | 韩文关键词 | 中文翻译 | 中文策略解释 | 预估流量(High/Medium/Low) | 相关性评分(1-5)】。
 
 第三，生成一个高点击率 (High CTR) 韩文标题方案：公式 [品牌名] + [直击痛点形容词] + [核心差异化卖点] + [核心大词] + [核心属性/材质] + [场景/功能]。20个字以内，符合韩国人可读性（需附带中文翻译）。
@@ -95,9 +110,6 @@ PROMPT_STEP_3 = """
 模块二：否定关键词列表 (纯中文简述屏蔽的原因，并列出建议屏蔽的韩文词)。
 """
 
-# ==========================================
-# 2. Naver 数据抓取函数
-# ==========================================
 def clean_for_api(keyword: str) -> str:
     return re.sub(r"\s+", "", keyword)
 
@@ -134,7 +146,6 @@ def fetch_naver_data(main_keywords, pb, st_text):
                 for item in data.get("keywordList", [])[:8]: 
                     pc = normalize_count(item.get("monthlyPcQcCnt", 0))
                     mob = normalize_count(item.get("monthlyMobileQcCnt", 0))
-                    
                     all_rows.append({
                         "Naver实际搜索词": item.get("relKeyword", ""),
                         "月总搜索量": pc + mob,
@@ -143,23 +154,18 @@ def fetch_naver_data(main_keywords, pb, st_text):
                     })
         except Exception:
             pass
-        time.sleep(1) # API 频率保护
-        
+        time.sleep(1)
     df = pd.DataFrame(all_rows)
     if not df.empty:
         df = df.drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
     return df
 
-# ==========================================
-# 3. 主 UI 与全自动工作流
-# ==========================================
 st.title("⚡ LxU 自动化测品工厂 (全自动闭环版)")
-st.info("💡 流程提示：上传产品详情页 ➡️ 自动 AI 识图提词 ➡️ 自动查询 Naver 流量并拓词 ➡️ 自动排兵布阵")
-
 files = st.file_uploader("📥 请上传产品详情页 (PDF/PNG/JPG)", type=["pdf", "png", "jpg"], accept_multiple_files=True)
 
 if files and st.button("🚀 启动全自动闭环"):
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    # 更换为极其稳定且免费额度更高的 1.5-flash 模型！
+    model = genai.GenerativeModel("gemini-1.5-flash")
     
     for file in files:
         st.divider()
@@ -167,82 +173,71 @@ if files and st.button("🚀 启动全自动闭环"):
         temp_path = f"temp_{file.name}"
         with open(temp_path, "wb") as f: f.write(file.getbuffer())
         
-        # ------------------ 第一步：自动识图与提取 ------------------
         with st.status("🔍 第一步：AI 视觉提炼与本地化分析...", expanded=True) as s1:
-            gen_file = genai.upload_file(path=temp_path)
-            while gen_file.state.name == "PROCESSING":
-                time.sleep(2)
-                gen_file = genai.get_file(gen_file.name)
-                
-            res1 = model.generate_content([gen_file, PROMPT_STEP_1])
-            with st.expander("👉 查看第一步完整报告 (已强制纯中文隔离)", expanded=False):
-                st.write(res1.text)
-                
-            # 强化版韩文长尾词提取（保留空格）
-            match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1.text, re.DOTALL | re.IGNORECASE)
-            kw_list = []
-            if match:
-                raw_block = match.group(1)
-                raw_block = re.sub(r'[,，]', '\n', raw_block)
-                for line in raw_block.split('\n'):
-                    clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
-                    clean_word = re.sub(r'\s+', ' ', clean_word)
-                    if clean_word and clean_word not in kw_list:
-                        kw_list.append(clean_word)
-            else:
-                tail_text = res1.text[-800:]
-                for line in tail_text.split('\n'):
-                    clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
-                    clean_word = re.sub(r'\s+', ' ', clean_word)
-                    if clean_word and clean_word not in kw_list:
-                        kw_list.append(clean_word)
-                kw_list = kw_list[:25]
-                
-            if kw_list:
-                s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个纯正韩文词组", state="complete")
-                st.success(f"即将送往 Naver 拓词查询的种子词表：{kw_list}")
-            else:
-                s1.update(label="❌ 第一步提取失败，未能找到韩文", state="error")
-                continue 
+            try:
+                gen_file = genai.upload_file(path=temp_path)
+                while gen_file.state.name == "PROCESSING":
+                    time.sleep(2)
+                    gen_file = genai.get_file(gen_file.name)
+                    
+                res1 = model.generate_content([gen_file, PROMPT_STEP_1])
+                with st.expander("👉 查看第一步完整报告", expanded=False):
+                    st.write(res1.text)
+                    
+                match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1.text, re.DOTALL | re.IGNORECASE)
+                kw_list = []
+                if match:
+                    raw_block = match.group(1)
+                    raw_block = re.sub(r'[,，]', '\n', raw_block)
+                    for line in raw_block.split('\n'):
+                        clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                        clean_word = re.sub(r'\s+', ' ', clean_word)
+                        if clean_word and clean_word not in kw_list:
+                            kw_list.append(clean_word)
+                else:
+                    tail_text = res1.text[-800:]
+                    for line in tail_text.split('\n'):
+                        clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                        clean_word = re.sub(r'\s+', ' ', clean_word)
+                        if clean_word and clean_word not in kw_list:
+                            kw_list.append(clean_word)
+                    kw_list = kw_list[:25]
+                    
+                if kw_list:
+                    s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个韩文词组", state="complete")
+                else:
+                    s1.update(label="❌ 提取失败，未能找到韩文", state="error")
+                    continue 
+            except Exception as e:
+                s1.update(label=f"❌ API 崩溃: {e}", state="error")
+                st.error("请点击左侧栏的【一键清理云端积压文件】按钮，或者等待额度刷新。")
+                continue
 
-        # ------------------ 第二步：自动触发 Naver 流量回测 ------------------
-        with st.status("📊 第二步：连接 Naver 获取真实搜索数据 (自动跳转)...", expanded=True) as s2:
+        with st.status("📊 第二步：连接 Naver 获取真实搜索数据...", expanded=True) as s2:
             pb = st.progress(0)
             status_txt = st.empty()
-            
             df_market = fetch_naver_data(kw_list, pb, status_txt)
-            
             if not df_market.empty:
                 st.dataframe(df_market)
-                target_count = len(kw_list)
-                derived_count = len(df_market)
-                s2.update(label=f"✅ 第二步完成！已获取最新韩国市场客观数据 (目标词：{target_count} 个 ➡️ 衍生词：{derived_count} 个)", state="complete")
+                s2.update(label=f"✅ 第二步完成！(目标词：{len(kw_list)} ➡️ 衍生词：{len(df_market)})", state="complete")
             else:
-                s2.update(label="❌ 第二步失败，Naver 未返回有效数据", state="error")
+                s2.update(label="❌ 第二步失败，Naver 未返回数据", state="error")
                 continue 
 
-        # ------------------ 第三步：自动触发终极策略推演 ------------------
-        with st.status("🧠 第三步：主客观数据融合，生成终极策略 (自动跳转)...", expanded=True) as s3:
+        with st.status("🧠 第三步：生成终极策略...", expanded=True) as s3:
             market_csv = df_market.to_csv(index=False)
             final_prompt = PROMPT_STEP_3.format(market_data=market_csv)
-            
             res3 = model.generate_content([gen_file, final_prompt])
             st.markdown("### 🏆 LxU 终极测品策略报告")
             st.success(res3.text)
-            
-            s3.update(label="✅ 第三步完成！终极排兵布阵已生成", state="complete")
+            s3.update(label="✅ 第三步完成！", state="complete")
 
-        # ------------------ 收尾与导出 ------------------
+        # 正常清理
         os.remove(temp_path)
         try:
             genai.delete_file(gen_file.name)
         except:
             pass
             
-        final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1.text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3.text
-        
-        st.download_button(
-            label=f"📥 一键下载 {file.name} 完整测品报告 (TXT)", 
-            data=final_report, 
-            file_name=f"LxU_自动测品全记录_{file.name}.txt"
-        )
+        final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼]\n" + res1.text + "\n\n" + "="*40 + "\n[第二步：Naver 数据]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略]\n" + res3.text
+        st.download_button(label=f"📥 下载测品报告 (TXT)", data=final_report, file_name=f"LxU_测品_{file.name}.txt")
