@@ -193,22 +193,36 @@ if files and st.button("🚀 启动全链路提炼"):
             with st.expander("👉 点击查看：第一步 AI 原始全量输出报告"):
                 st.write(res1.text)
             
-            # 暴力正则提取纯韩文
+            # --- 🚀 修复版：按行提取，保留韩文内部的空格长尾词 ---
             match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1.text, re.DOTALL | re.IGNORECASE)
             kw_list = []
             if match:
                 raw_block = match.group(1)
-                extracted_words = re.findall(r'[가-힣]+', raw_block) # 只要韩文字符
-                kw_list = list(dict.fromkeys(extracted_words))
+                # 兼容处理：把逗号全部替换成换行符
+                raw_block = re.sub(r'[,，]', '\n', raw_block)
+                
+                # 按行分割处理
+                for line in raw_block.split('\n'):
+                    # 只保留韩文和空格，洗掉数字、标点和中文
+                    clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                    # 压缩连续空格
+                    clean_word = re.sub(r'\s+', ' ', clean_word)
+                    
+                    if clean_word and clean_word not in kw_list:
+                        kw_list.append(clean_word)
             else:
-                st.warning("⚠️ 未找到精准锚点，尝试从全文最后暴力抓取...")
+                st.warning("⚠️ 未找到精准锚点，尝试从全文最后抓取...")
                 tail_text = res1.text[-800:]
-                extracted_words = re.findall(r'[가-힣]+', tail_text)
-                kw_list = list(dict.fromkeys(extracted_words))[:25]
+                for line in tail_text.split('\n'):
+                    clean_word = re.sub(r'[^가-힣\s]', '', line).strip()
+                    clean_word = re.sub(r'\s+', ' ', clean_word)
+                    if clean_word and clean_word not in kw_list:
+                        kw_list.append(clean_word)
+                kw_list = kw_list[:25]
                 
             if kw_list:
-                s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个纯韩文初筛词", state="complete")
-                st.success(f"准备喂给 Naver 的词表：{kw_list}")
+                s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个纯韩文初筛词 (包含长尾词)", state="complete")
+                st.success(f"准备喂给 Naver 的精准词表：{kw_list}")
             else:
                 s1.update(label="❌ 第一步提取失败，未能找到任何韩文", state="error")
                 continue # 跳过该文件
