@@ -10,6 +10,8 @@ import hmac
 import base64
 import concurrent.futures
 import io 
+import zipfile              # 🚀 新增：用于打包 ZIP
+from docx import Document   # 🚀 新增：用于生成 Word 文件
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -84,7 +86,6 @@ PROMPT_STEP_1 = """
 [LXU_KEYWORDS_END]
 """
 
-# 🚀 升级：增加产品全维度深度解析前置
 PROMPT_STEP_3 = """
 【以下是市场核心搜索词及拓展词真实流量数据】：
 {market_data}
@@ -126,7 +127,6 @@ PROMPT_STEP_3 = """
 # ==========================================
 
 def safe_generate(model, contents, max_retries=3):
-    """包裹了重试逻辑的安全生成函数，彻底防止程序因 API 抽风卡死"""
     for attempt in range(1, max_retries + 1):
         try:
             res = model.generate_content(contents)
@@ -232,6 +232,10 @@ files = st.file_uploader("📥 请上传产品详情页 (强烈建议截图，�
 if files and st.button("🚀 启动全自动闭环", use_container_width=True):
     model = genai.GenerativeModel("gemini-2.5-flash")
     
+    # 🚀 初始化主 ZIP 压缩包缓冲
+    master_zip_buffer = io.BytesIO()
+    master_zip = zipfile.ZipFile(master_zip_buffer, 'w', zipfile.ZIP_DEFLATED)
+    
     for file in files:
         st.divider()
         st.header(f"📦 正在自动处理产品：{file.name}")
@@ -242,6 +246,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         res3_text = ""
         kw_list = []
         market_csv = ""
+        folder_name = os.path.splitext(file.name)[0]  # 获取不带后缀的文件名作为文件夹名
 
         # ------------------ 第一步：自动识图与提取 ------------------
         with st.status("🔍 第一步：AI 视觉提炼与本地化分析...", expanded=True) as s1:
@@ -331,7 +336,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             except Exception as e:
                 s3.update(label=f"❌ 第三步系统逻辑错误: {e}", state="error")
 
-        # ------------------ 收尾与导出 ------------------
+        # ------------------ 收尾与文件生成 ------------------
         os.remove(temp_path)
         try:
             genai.delete_file(gen_file.name)
@@ -339,8 +344,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             pass
             
         try:
-            final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1_text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量 (精炼合集)]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3_text
-            
+            # === 解析与提炼 ===
             def parse_md_table(md_text, keyword):
                 lines = md_text.split('\n')
                 table_data = []
@@ -379,8 +383,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     if clean_t.startswith('LxU') and clean_t not in raw_titles:
                         raw_titles.append(clean_t)
             
-            coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅完整TXT"
-            naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅完整TXT"
+            coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅Word报告"
+            naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅Word报告"
 
             kw_lines = []
             for line in res1_text.split('\n'):
@@ -391,8 +395,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         if clean_kw and clean_kw not in kw_lines:
                             kw_lines.append(clean_kw)
             
-            coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅完整TXT"
-            naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅完整TXT"
+            coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅Word报告"
+            naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅Word报告"
 
             df_sheet1 = pd.DataFrame({
                 "信息维度": ["Coupang 标题", "Coupang 后台关键词", "Naver 标题", "Naver 后台关键词"],
@@ -402,38 +406,53 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             df_comments = parse_md_table(res1_text, "韩文评价原文")
             df_ads = parse_md_table(res3_text, "广告组分类")
 
+            # === 写入 Excel (内存) ===
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                 df_sheet1.to_excel(writer, index=False, sheet_name='登品标题')
-                
                 if not df_comments.empty:
                     df_comments.to_excel(writer, index=False, sheet_name='评论区内容')
                 else:
-                    pd.DataFrame([{"提示": "未找到规范的评价表格，请查阅下方TXT报告"}]).to_excel(writer, index=False, sheet_name='评论区内容')
-                
+                    pd.DataFrame([{"提示": "未找到规范的评价表格"}]).to_excel(writer, index=False, sheet_name='评论区内容')
                 if not df_ads.empty:
                     df_ads.to_excel(writer, index=False, sheet_name='广告投放关键词')
                 else:
-                    pd.DataFrame([{"提示": "未找到规范的广告策略表，请查阅下方TXT报告"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
-
+                    pd.DataFrame([{"提示": "未找到规范的广告策略表"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
             excel_data = excel_buffer.getvalue()
 
-            st.divider()
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label=f"📝 下载完整分析报告 (TXT)", 
-                    data=final_report, 
-                    file_name=f"LxU_自动测品全记录_{file.name}.txt",
-                    use_container_width=True
-                )
-            with col2:
-                st.download_button(
-                    label=f"📊 下载结果表格 (Excel)", 
-                    data=excel_data, 
-                    file_name=f"LxU_自动测品数据表_{file.name}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+            # === 🚀 写入 Word (内存) ===
+            doc = Document()
+            doc.add_heading(f'LxU 测品全景报告 - {folder_name}', 0)
+            
+            doc.add_heading('第一步：AI 视觉提炼与本地化分析', level=1)
+            doc.add_paragraph(res1_text)
+            
+            doc.add_heading('第三步：产品深度解析与终极广告策略', level=1)
+            doc.add_paragraph(res3_text)
+            
+            word_buffer = io.BytesIO()
+            doc.save(word_buffer)
+            word_data = word_buffer.getvalue()
+
+            # === 🚀 将生成的 Excel 和 Word 写入主 ZIP 包，套在一个按产品命名的文件夹里 ===
+            master_zip.writestr(f"{folder_name}/LxU_数据表_{folder_name}.xlsx", excel_data)
+            master_zip.writestr(f"{folder_name}/LxU_全景报告_{folder_name}.docx", word_data)
+            
+            st.success(f"📦 【{file.name}】 处理完毕！已打包存入内存。")
+            
         except Exception as e:
-            st.error(f"构建导出文件时发生错误: {e}")
+            st.error(f"处理 {file.name} 构建导出文件时发生错误: {e}")
+
+    # ==========================================
+    # 4. 循环结束后，提供统一大压缩包下载
+    # ==========================================
+    master_zip.close() # 关闭ZIP写入流
+    st.divider()
+    st.markdown("### 🎉 全部产品处理完成！")
+    st.download_button(
+        label=f"📥 一键下载全部结果 (ZIP 压缩包)", 
+        data=master_zip_buffer.getvalue(), 
+        file_name="LxU_批量测品结果合集.zip",
+        mime="application/zip",
+        use_container_width=True
+    )
