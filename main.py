@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import base64
 import concurrent.futures
-import io  # 🚀 新增：用于在内存中生成 Excel 文件
+import io 
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -83,7 +83,6 @@ PROMPT_STEP_1 = """
 [LXU_KEYWORDS_END]
 """
 
-# ================= 修复了过度模仿导致表格崩溃的指令 =================
 PROMPT_STEP_3 = """
 【以下是市场核心搜索词及拓展词真实流量数据（按搜索量降序排列）】：
 {market_data}
@@ -118,8 +117,21 @@ PROMPT_STEP_3 = """
 """
 
 # ==========================================
-# 2. Naver 数据抓取函数 (并发极速版)
+# 2. 强力引擎：安全生成与数据抓取
 # ==========================================
+
+def safe_generate(model, contents, max_retries=3):
+    """包裹了重试逻辑的安全生成函数，彻底防止程序因 API 抽风卡死"""
+    for attempt in range(1, max_retries + 1):
+        try:
+            res = model.generate_content(contents)
+            return res.text 
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(3) 
+            else:
+                return f"❌ 严重错误：API 连续 {max_retries} 次无响应或被安全拦截，无法生成内容。详情：{str(e)}"
+
 def clean_for_api(keyword: str) -> str:
     return re.sub(r"\s+", "", keyword)
 
@@ -188,7 +200,7 @@ def fetch_naver_data(main_keywords, pb, st_text):
 # ==========================================
 # 3. 主 UI 与全自动工作流
 # ==========================================
-st.title("⚡ LxU 自动化测品工厂 (终极稳定版)")
+st.title("⚡ LxU 自动化测品工厂 (终极防崩溃版)")
 st.info("💡 提示：运行中如需紧急终止，请点击页面右上角自带的圆形 Stop 按钮。")
 
 # 清理缓存按钮
@@ -227,8 +239,12 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                res1 = model.generate_content([gen_file, PROMPT_STEP_1])
-                res1_text = res1.text if hasattr(res1, 'text') else "第一步生成内容为空或被拦截"
+                res1_text = safe_generate(model, [gen_file, PROMPT_STEP_1])
+                
+                if res1_text.startswith("❌"):
+                    s1.update(label="❌ 第一步 AI 生成彻底失败", state="error")
+                    st.error(res1_text)
+                    continue
                 
                 with st.expander("👉 查看第一步完整报告 (已强制纯中文隔离)", expanded=False):
                     st.write(res1_text)
@@ -258,8 +274,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     s1.update(label="❌ 第一步提取失败，未能找到韩文", state="error")
                     continue 
             except Exception as e:
-                s1.update(label=f"❌ AI 请求失败: {e}", state="error")
-                st.error("请检查额度是否耗尽，或点击左侧清理云端缓存。")
+                s1.update(label=f"❌ 本地系统逻辑错误: {e}", state="error")
                 continue
 
         # ------------------ 第二步：自动触发 Naver 流量回测 ------------------
@@ -290,18 +305,19 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 market_csv = final_df.to_csv(index=False)
                 final_prompt = PROMPT_STEP_3.format(market_data=market_csv)
                 
-                res3 = model.generate_content([gen_file, final_prompt])
-                res3_text = res3.text if hasattr(res3, 'text') else "第三步生成失败，未返回有效文字"
+                res3_text = safe_generate(model, [gen_file, final_prompt])
                 
-                st.markdown("### 🏆 LxU 终极测品策略报告")
-                st.success(res3_text)
-                
-                s3.update(label="✅ 第三步完成！终极排兵布阵已生成", state="complete")
+                if res3_text.startswith("❌"):
+                    s3.update(label="❌ 第三步 AI 生成彻底失败", state="error")
+                    st.error(res3_text)
+                else:
+                    st.markdown("### 🏆 LxU 终极测品策略报告")
+                    st.success(res3_text)
+                    s3.update(label="✅ 第三步完成！终极排兵布阵已生成", state="complete")
             except Exception as e:
-                s3.update(label=f"❌ 第三步失败: {e}", state="error")
-                st.error("由于 API 拦截或网络超时，第三步策略报告生成中断。")
+                s3.update(label=f"❌ 第三步系统逻辑错误: {e}", state="error")
 
-        # ------------------ 收尾与导出 (🚀 完美 Excel 导出升级) ------------------
+        # ------------------ 收尾与导出 ------------------
         os.remove(temp_path)
         try:
             genai.delete_file(gen_file.name)
@@ -324,33 +340,53 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         table_data.append(line)
                         continue
                     if is_table:
-                        # 只要有 | 符号且不是纯虚线分割就提取
                         if line.startswith('|') or line.endswith('|') or '|' in line:
                             if '---' not in line:
                                 table_data.append(line)
                         else:
-                            if len(line.strip()) > 0: # 遇到非表格文字跳出
+                            if len(line.strip()) > 0: 
                                 break
                 if not table_data:
                     return pd.DataFrame()
                 parsed_rows = []
                 for row in table_data:
                     cols = [col.strip() for col in row.split('|')]
-                    if cols and not cols[0]: cols = cols[1:]   # 清理行首空格
-                    if cols and not cols[-1]: cols = cols[:-1] # 清理行尾空格
+                    if cols and not cols[0]: cols = cols[1:]   
+                    if cols and not cols[-1]: cols = cols[:-1] 
                     parsed_rows.append(cols)
                 if len(parsed_rows) > 1:
                     return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
                 return pd.DataFrame()
 
-            # 📌 Sheet 1：登品标题提取
-            titles = re.findall(r'(LxU[^\n]+)', res1_text)
-            coupang_title = titles[0] if len(titles) > 0 else "未提取到 Coupang 标题"
-            naver_title = titles[1] if len(titles) > 1 else "未提取到 Naver 标题"
+            # 📌 Sheet 1：登品标题精准提取 (修复版本)
+            raw_titles = []
+            for line in res1_text.split('\n'):
+                # 严格过滤掉带有公式、要求等提示词的干扰项，只取真正的标题
+                if 'LxU' in line and '公式' not in line and '规则' not in line and '卖点' not in line and '核心词' not in line:
+                    clean_t = re.sub(r'```[a-zA-Z]*', '', line).strip()
+                    clean_t = clean_t.strip('`').strip()
+                    if clean_t and clean_t not in raw_titles:
+                        raw_titles.append(clean_t)
             
+            coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅完整TXT"
+            naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅完整TXT"
+
+            kw_lines = []
+            for line in res1_text.split('\n'):
+                # 关键词通常是一串含有多个逗号的韩文，且不在表格内
+                if ('，' in line or ',' in line) and '|' not in line and re.search(r'[가-힣]', line):
+                    if line.count(',') + line.count('，') >= 5: 
+                        clean_kw = re.sub(r'```[a-zA-Z]*', '', line).strip()
+                        clean_kw = clean_kw.strip('`').strip()
+                        if clean_kw and clean_kw not in kw_lines:
+                            kw_lines.append(clean_kw)
+            
+            coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅完整TXT"
+            naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅完整TXT"
+
             df_sheet1 = pd.DataFrame({
-                "信息维度": ["Coupang 标题", "Naver 标题", "后台搜索关键词"],
-                "提炼内容": [coupang_title, naver_title, ", ".join(kw_list)]
+                "信息维度": ["Coupang 标题", "Coupang 后台关键词", "Naver 标题", "Naver 后台关键词"],
+                "提炼内容": [coupang_title, coupang_kws, naver_title, naver_kws]
             })
 
             # 📌 Sheet 2 & 3：提取表格
@@ -360,16 +396,13 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             # 3. 写入内存 Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                # 写入 Sheet 1
                 df_sheet1.to_excel(writer, index=False, sheet_name='登品标题')
                 
-                # 写入 Sheet 2
                 if not df_comments.empty:
                     df_comments.to_excel(writer, index=False, sheet_name='评论区内容')
                 else:
                     pd.DataFrame([{"提示": "未找到规范的评价表格，请查阅下方TXT报告"}]).to_excel(writer, index=False, sheet_name='评论区内容')
                 
-                # 写入 Sheet 3
                 if not df_ads.empty:
                     df_ads.to_excel(writer, index=False, sheet_name='广告投放关键词')
                 else:
