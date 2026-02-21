@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import base64
 import concurrent.futures
+import io  # 🚀 新增：用于在内存中生成 Excel 文件
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -290,7 +291,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             except Exception as e:
                 s3.update(label=f"❌ 第三步失败: {e}", state="error")
 
-        # ------------------ 收尾与导出 ------------------
+        # ------------------ 收尾与导出 (🚀 完美 Excel 导出升级) ------------------
         os.remove(temp_path)
         try:
             genai.delete_file(gen_file.name)
@@ -298,12 +299,90 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             pass
             
         try:
+            # 1. 保留原本的 TXT 全景报告 (提供多种下载选择)
             final_report = f"【LxU 产品测品全景报告：{file.name}】\n\n" + "="*40 + "\n[第一步：AI 视觉提炼 (纯中文)]\n" + res1.text + "\n\n" + "="*40 + "\n[第二步：Naver 客观搜索量 (精炼合集)]\n" + market_csv + "\n\n" + "="*40 + "\n[第三步：终极策略与广告分组]\n" + res3.text
             
-            st.download_button(
-                label=f"📥 一键下载 {file.name} 完整测品报告 (TXT)", 
-                data=final_report, 
-                file_name=f"LxU_自动测品全记录_{file.name}.txt"
-            )
-        except:
-            pass
+            # 2. 核心：智能解析 Markdown 表格为 DataFrame
+            def parse_md_table(md_text, keyword):
+                lines = md_text.split('\n')
+                table_data = []
+                is_table = False
+                for line in lines:
+                    line = line.strip()
+                    if '|' in line and keyword in line:
+                        is_table = True
+                        table_data.append(line)
+                        continue
+                    if is_table:
+                        # 如果行里包含 | 符号，说明还在表格内；排除掉底部的分割线(---)
+                        if line.startswith('|') or line.endswith('|') or '|' in line:
+                            if '---' not in line:
+                                table_data.append(line)
+                        else:
+                            if len(line.strip()) > 0: # 遇到非表格的文字就跳出
+                                break
+                if not table_data:
+                    return pd.DataFrame()
+                parsed_rows = []
+                for row in table_data:
+                    cols = [col.strip() for col in row.split('|')]
+                    if cols and not cols[0]: cols = cols[1:]   # 去掉开头多余的空格
+                    if cols and not cols[-1]: cols = cols[:-1] # 去掉结尾多余的空格
+                    parsed_rows.append(cols)
+                if len(parsed_rows) > 1:
+                    return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
+                return pd.DataFrame()
+
+            # 📌 组装 Sheet 1：登品标题
+            titles = re.findall(r'(LxU[^\n]+)', res1.text)
+            coupang_title = titles[0] if len(titles) > 0 else "未提取到标准标题，请查阅TXT报告"
+            naver_title = titles[1] if len(titles) > 1 else "未提取到标准标题，请查阅TXT报告"
+            
+            df_sheet1 = pd.DataFrame({
+                "信息维度": ["Coupang 标题", "Naver 标题", "后台搜索关键词"],
+                "提炼内容": [coupang_title, naver_title, ", ".join(kw_list)]
+            })
+
+            # 📌 组装 Sheet 2：评论区内容
+            df_comments = parse_md_table(res1.text, "韩文评价原文")
+
+            # 📌 组装 Sheet 3：广告投放关键词
+            df_ads = parse_md_table(res3.text, "广告组分类")
+
+            # 3. 将三个 Sheet 写入内存中的 Excel 文件
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                df_sheet1.to_excel(writer, index=False, sheet_name='登品标题')
+                
+                if not df_comments.empty:
+                    df_comments.to_excel(writer, index=False, sheet_name='评论区内容')
+                else:
+                    pd.DataFrame([{"提示": "未找到评价表格，请查阅完整 TXT"}]).to_excel(writer, index=False, sheet_name='评论区内容')
+                
+                if not df_ads.empty:
+                    df_ads.to_excel(writer, index=False, sheet_name='广告投放关键词')
+                else:
+                    pd.DataFrame([{"提示": "未找到广告策略表格，请查阅完整 TXT"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
+
+            excel_data = excel_buffer.getvalue()
+
+            # 4. 在界面上分两列展示下载按钮（TXT 和 Excel 供你双选）
+            st.divider()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label=f"📝 下载完整分析报告 (TXT)", 
+                    data=final_report, 
+                    file_name=f"LxU_自动测品全记录_{file.name}.txt",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    label=f"📊 下载结果表格 (Excel)", 
+                    data=excel_data, 
+                    file_name=f"LxU_自动测品数据表_{file.name}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+        except Exception as e:
+            st.error(f"导出文件时发生错误: {e}")
