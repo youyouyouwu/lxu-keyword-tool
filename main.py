@@ -10,8 +10,8 @@ import hmac
 import base64
 import concurrent.futures
 import io 
-import zipfile              # 🚀 新增：用于打包 ZIP
-from docx import Document   # 🚀 新增：用于生成 Word 文件
+import zipfile              
+import markdown  # 🚀 新增：用于将文本渲染为极美网页排版
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -216,7 +216,6 @@ def fetch_naver_data(main_keywords, pb, st_text):
 st.title("⚡ LxU 自动化测品工厂 (终极防崩溃版)")
 st.info("💡 提示：运行中如需紧急终止，请点击页面右上角自带的圆形 Stop 按钮。")
 
-# 清理缓存按钮
 if st.sidebar.button("🗑️ 清理云端垃圾文件"):
     try:
         count = 0
@@ -232,7 +231,6 @@ files = st.file_uploader("📥 请上传产品详情页 (强烈建议截图，�
 if files and st.button("🚀 启动全自动闭环", use_container_width=True):
     model = genai.GenerativeModel("gemini-2.5-flash")
     
-    # 🚀 初始化主 ZIP 压缩包缓冲
     master_zip_buffer = io.BytesIO()
     master_zip = zipfile.ZipFile(master_zip_buffer, 'w', zipfile.ZIP_DEFLATED)
     
@@ -246,7 +244,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         res3_text = ""
         kw_list = []
         market_csv = ""
-        folder_name = os.path.splitext(file.name)[0]  # 获取不带后缀的文件名作为文件夹名
+        folder_name = os.path.splitext(file.name)[0]
 
         # ------------------ 第一步：自动识图与提取 ------------------
         with st.status("🔍 第一步：AI 视觉提炼与本地化分析...", expanded=True) as s1:
@@ -336,7 +334,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             except Exception as e:
                 s3.update(label=f"❌ 第三步系统逻辑错误: {e}", state="error")
 
-        # ------------------ 收尾与文件生成 ------------------
+        # ------------------ 收尾与文件生成 (🚀 升级为高定网页版报告) ------------------
         os.remove(temp_path)
         try:
             genai.delete_file(gen_file.name)
@@ -383,8 +381,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     if clean_t.startswith('LxU') and clean_t not in raw_titles:
                         raw_titles.append(clean_t)
             
-            coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅Word报告"
-            naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅Word报告"
+            coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅全景报告"
+            naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅全景报告"
 
             kw_lines = []
             for line in res1_text.split('\n'):
@@ -395,8 +393,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         if clean_kw and clean_kw not in kw_lines:
                             kw_lines.append(clean_kw)
             
-            coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅Word报告"
-            naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅Word报告"
+            coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅全景报告"
+            naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅全景报告"
 
             df_sheet1 = pd.DataFrame({
                 "信息维度": ["Coupang 标题", "Coupang 后台关键词", "Naver 标题", "Naver 后台关键词"],
@@ -420,23 +418,59 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     pd.DataFrame([{"提示": "未找到规范的广告策略表"}]).to_excel(writer, index=False, sheet_name='广告投放关键词')
             excel_data = excel_buffer.getvalue()
 
-            # === 🚀 写入 Word (内存) ===
-            doc = Document()
-            doc.add_heading(f'LxU 测品全景报告 - {folder_name}', 0)
+            # === 🚀 写入精美 HTML 网页报告 (完美替代容易乱码的 Word) ===
+            css_style = """
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Malgun Gothic", "Microsoft YaHei", sans-serif; padding: 40px; max-width: 1000px; margin: auto; line-height: 1.6; color: #333; background-color: #f4f6f9; }
+                .container { background: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                h1 { color: #1E3A8A; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; text-align: center; }
+                h2 { color: #2563eb; margin-top: 30px; }
+                h3 { color: #475569; }
+                table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 14px; border-radius: 8px; overflow: hidden; }
+                th, td { border: 1px solid #e2e8f0; padding: 12px 15px; text-align: left; }
+                th { background-color: #f8fafc; color: #1e293b; font-weight: 600; }
+                tr:nth-child(even) { background-color: #f1f5f9; }
+                pre { background-color: #1e293b; padding: 20px; border-radius: 8px; overflow-x: auto; color: #f8fafc; font-family: monospace; }
+                code { background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; color: #b91c1c; font-size: 0.9em; }
+                .print-btn { display: block; width: 200px; margin: 20px auto; padding: 10px; background-color: #2563eb; color: white; text-align: center; text-decoration: none; border-radius: 5px; font-weight: bold; cursor: pointer; border: none; }
+                @media print { .print-btn { display: none; } body { background-color: white; } .container { box-shadow: none; padding: 0; } }
+            </style>
+            """
             
-            doc.add_heading('第一步：AI 视觉提炼与本地化分析', level=1)
-            doc.add_paragraph(res1_text)
-            
-            doc.add_heading('第三步：产品深度解析与终极广告策略', level=1)
-            doc.add_paragraph(res3_text)
-            
-            word_buffer = io.BytesIO()
-            doc.save(word_buffer)
-            word_data = word_buffer.getvalue()
+            # 使用 markdown 库将 AI 生成的文本转换为 HTML 表格和排版
+            html_part1 = markdown.markdown(res1_text, extensions=['tables', 'fenced_code'])
+            html_part3 = markdown.markdown(res3_text, extensions=['tables', 'fenced_code'])
 
-            # === 🚀 将生成的 Excel 和 Word 写入主 ZIP 包，套在一个按产品命名的文件夹里 ===
+            html_content = f"""
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+                <meta charset="utf-8">
+                <title>LxU 测品全景报告 - {folder_name}</title>
+                {css_style}
+            </head>
+            <body>
+                <div class="container">
+                    <button class="print-btn" onclick="window.print()">🖨️ 保存为高质量 PDF</button>
+                    <h1>📊 LxU 测品全景报告</h1>
+                    <p style="text-align: center; color: #64748b;">报告归属产品：{folder_name} | 生成日期：自动记录</p>
+                    
+                    <h2>🔍 第一步：AI 视觉提炼与本地化分析</h2>
+                    {html_part1}
+                    
+                    <hr style="border: 1px dashed #cbd5e1; margin: 40px 0;">
+                    
+                    <h2>🧠 第三步：产品深度解析与终极广告策略</h2>
+                    {html_part3}
+                </div>
+            </body>
+            </html>
+            """
+            
+            # === 将生成的 Excel 和 HTML 网页写入主 ZIP 包 ===
             master_zip.writestr(f"{folder_name}/LxU_数据表_{folder_name}.xlsx", excel_data)
-            master_zip.writestr(f"{folder_name}/LxU_全景报告_{folder_name}.docx", word_data)
+            # 存为 .html 后缀
+            master_zip.writestr(f"{folder_name}/LxU_视觉报告_{folder_name}.html", html_content.encode('utf-8'))
             
             st.success(f"📦 【{file.name}】 处理完毕！已打包存入内存。")
             
@@ -447,12 +481,13 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
     # 4. 循环结束后，提供统一大压缩包下载
     # ==========================================
     master_zip.close() # 关闭ZIP写入流
-    st.divider()
-    st.markdown("### 🎉 全部产品处理完成！")
-    st.download_button(
-        label=f"📥 一键下载全部结果 (ZIP 压缩包)", 
-        data=master_zip_buffer.getvalue(), 
-        file_name="LxU_批量测品结果合集.zip",
-        mime="application/zip",
-        use_container_width=True
-    )
+    if files:
+        st.divider()
+        st.markdown("### 🎉 全部产品处理完成！")
+        st.download_button(
+            label=f"📥 一键下载全部结果 (ZIP 压缩包)", 
+            data=master_zip_buffer.getvalue(), 
+            file_name="LxU_批量测品结果合集.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
