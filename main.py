@@ -8,6 +8,7 @@ import requests
 import hashlib
 import hmac
 import base64
+import concurrent.futures  # 🚀 新增：多线程并发加速库！
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -25,7 +26,7 @@ if not all([GEMINI_API_KEY, NAVER_API_KEY, NAVER_SECRET_KEY, NAVER_CUSTOMER_ID])
 
 genai.configure(api_key=GEMINI_API_KEY)
 SECRET_KEY_BYTES = NAVER_SECRET_KEY.encode("utf-8")
-NAVER_API_URL = "[https://api.searchad.naver.com/keywordstool](https://api.searchad.naver.com/keywordstool)"
+NAVER_API_URL = "https://api.searchad.naver.com/keywordstool"
 
 # ==========================================
 # 1. 核心指令
@@ -45,8 +46,8 @@ PROMPT_STEP_1 = """
 - 必须语义通顺，像真实韩国卖家写的，避免机械堆砌关键词。
 
 【💡 极度重要排版要求：一键复制功能】：
-你生成的“纯韩文逗号隔开的后台关键词”以及“纯韩文评价”，必须单独放在 Markdown 代码块里面！
-**警告：代码块开头只允许写三个反引号 ``` ，绝对不允许出现 ```text 或任何字母！代码块内只有纯韩文（如果是关键词加逗号），不允许有其他多余解释！**
+你生成的“纯韩文逗号隔开的后台关键词”，必须单独放在 Markdown 代码块里面！
+**警告：代码块开头只允许写三个反引号 ``` ，绝对不允许出现 ```text 或任何字母！代码块内只有纯韩文和逗号，不允许换行！**
 
 第一部分：Coupang 专属优化 (偏转化与清晰表达)
 1. 标题公式：LxU + 核心卖点 + 关键规格或属性 + 使用场景或解决问题点。核心词必须放前面。
@@ -115,7 +116,7 @@ PROMPT_STEP_3 = """
 """
 
 # ==========================================
-# 2. Naver 数据抓取函数
+# 2. Naver 数据抓取函数 (🚀 升级为 5 倍速并发版)
 # ==========================================
 def clean_for_api(keyword: str) -> str:
     return re.sub(r"\s+", "", keyword)
@@ -140,21 +141,21 @@ def normalize_count(raw):
 def fetch_naver_data(main_keywords, pb, st_text):
     all_rows = []
     total = len(main_keywords)
-    for i, mk in enumerate(main_keywords, start=1):
-        st_text.text(f"📊 Naver 拓词查询进度 [{i}/{total}]: {mk}")
-        pb.progress(i / total)
+
+    # 抽取单次查询逻辑
+    def fetch_single(mk):
+        rows = []
         try:
             timestamp = str(int(time.time() * 1000))
             sig = make_signature("GET", "/keywordstool", timestamp)
             headers = {"X-Timestamp": timestamp, "X-API-KEY": NAVER_API_KEY, "X-Customer": NAVER_CUSTOMER_ID, "X-Signature": sig}
-            res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1})
+            res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1}, timeout=8)
             if res.status_code == 200:
                 data = res.json()
                 for item in data.get("keywordList", []): 
                     pc = normalize_count(item.get("monthlyPcQcCnt", 0))
                     mob = normalize_count(item.get("monthlyMobileQcCnt", 0))
-                    
-                    all_rows.append({
+                    rows.append({
                         "Naver实际搜索词": item.get("relKeyword", ""),
                         "月总搜索量": pc + mob,
                         "竞争度": item.get("compIdx", "-"),
@@ -162,8 +163,24 @@ def fetch_naver_data(main_keywords, pb, st_text):
                     })
         except Exception:
             pass
-        time.sleep(1) # API 频率保护
-        
+        return rows
+
+    completed = 0
+    # 🚀 使用多线程并发，同时开 5 个通道查词，速度飙升！
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_mk = {executor.submit(fetch_single, mk): mk for mk in main_keywords}
+        for future in concurrent.futures.as_completed(future_to_mk):
+            mk = future_to_mk[future]
+            completed += 1
+            # UI 实时更新
+            st_text.text(f"📊 Naver 极速并发拓词中 [{completed}/{total}]: {mk}")
+            pb.progress(completed / total)
+            try:
+                all_rows.extend(future.result())
+            except Exception:
+                pass
+            time.sleep(0.05) # 极短暂防拥堵缓冲，比之前的 1 秒快了 20 倍
+            
     df = pd.DataFrame(all_rows)
     if not df.empty:
         df = df.drop_duplicates(subset=["Naver实际搜索词"]).sort_values(by="月总搜索量", ascending=False)
@@ -172,7 +189,7 @@ def fetch_naver_data(main_keywords, pb, st_text):
 # ==========================================
 # 3. 主 UI 与全自动工作流
 # ==========================================
-st.title("⚡ LxU 自动化测品工厂 (终极逻辑版)")
+st.title("⚡ LxU 自动化测品工厂 (极速并发版)")
 st.info("💡 提示：如果遇到额度耗尽，请稍作等待，或手动在 Secrets 中更换 API Key。")
 
 # 清理缓存按钮
