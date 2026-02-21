@@ -4,4 +4,4 @@ pandas
 requests
 openpyxl
 xlsxwriter
-
+python-docx
