@@ -16,7 +16,7 @@ import markdown  # 🚀 新增：用于将文本渲染为极美网页排版
 # ==========================================
 # 0. 页面与 Secrets 配置
 # ==========================================
-st.set_page_config(page_title="LxU 测品工作流 (终极稳定版)", layout="wide")
+st.set_page_config(page_title="LxU 测品策略生成器", layout="wide")
 
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 NAVER_API_KEY = st.secrets.get("API_KEY")
@@ -535,5 +535,6 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             mime="application/zip",
             use_container_width=True
         )
+
 
 
