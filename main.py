@@ -13,7 +13,7 @@ import io
 import zipfile
 import markdown  # 🚀 新增：用于将文本渲染为极美网页排版
 
-# ✅ 新增：喂料包（切片+CSV）写入 master_zip
+# ✅ 喂料包（切片+CSV）写入（先写到单独zip，再塞进master_zip）
 from material_pack import PackConfig, write_feed_to_master_zip
 
 # ==========================================
@@ -413,8 +413,10 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 parsed_rows = []
                 for row in table_data:
                     cols = [col.strip() for col in row.split('|')]
-                    if cols and not cols[0]: cols = cols[1:]
-                    if cols and not cols[-1]: cols = cols[:-1]
+                    if cols and not cols[0]:
+                        cols = cols[1:]
+                    if cols and not cols[-1]:
+                        cols = cols[:-1]
                     parsed_rows.append(cols)
                 if len(parsed_rows) > 1:
                     return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
@@ -514,7 +516,10 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             </html>
             """
 
-            # ✅ 新增：写入 FEED 喂料包（切片 + CSV），不改变原有运行逻辑
+            # ✅ 生成 FEED_{folder}.zip（在内存里先打一个zip，再写入 master_zip）
+            feed_buffer = io.BytesIO()
+            feed_zip = zipfile.ZipFile(feed_buffer, 'w', zipfile.ZIP_DEFLATED)
+
             pack_cfg = PackConfig(
                 target_w=1400,
                 max_h=1600,
@@ -523,39 +528,26 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 skip_blank=True,
                 pdf_scale=2.0
             )
-# === 先单独生成 FEED_xxx.zip 压缩包 ===
-feed_buffer = io.BytesIO()
-feed_zip = zipfile.ZipFile(feed_buffer, 'w', zipfile.ZIP_DEFLATED)
 
-pack_cfg = PackConfig(
-    target_w=1400,
-    max_h=1600,
-    min_h=900,
-    overlap=0.12,
-    skip_blank=True,
-    pdf_scale=2.0
-)
+            write_feed_to_master_zip(
+                master_zip=feed_zip,  # ⚠️ 这里是 feed_zip，不是 master_zip
+                folder_name=folder_name,
+                uploaded_filename=file.name,
+                uploaded_bytes=file.getvalue(),
+                cfg=pack_cfg,
+                kw_list=kw_list,
+                df_market=df_market,
+                final_df=final_df,
+                res1_text=res1_text,
+                res3_text=res3_text
+            )
 
-write_feed_to_master_zip(
-    master_zip=feed_zip,  # 注意这里改成 feed_zip
-    folder_name=folder_name,
-    uploaded_filename=file.name,
-    uploaded_bytes=file.getvalue(),
-    cfg=pack_cfg,
-    kw_list=kw_list,
-    df_market=df_market,
-    final_df=final_df,
-    res1_text=res1_text,
-    res3_text=res3_text
-)
+            feed_zip.close()
 
-feed_zip.close()
-
-# === 把 FEED_xxx.zip 写入主压缩包 ===
-master_zip.writestr(
-    f"{folder_name}/FEED_{folder_name}.zip",
-    feed_buffer.getvalue()
-)
+            master_zip.writestr(
+                f"{folder_name}/FEED_{folder_name}.zip",
+                feed_buffer.getvalue()
+            )
 
             # === 将生成的 Excel 和 HTML 网页写入主 ZIP 包 ===
             master_zip.writestr(f"{folder_name}/LxU_数据表_{folder_name}.xlsx", excel_data)
@@ -580,4 +572,3 @@ master_zip.writestr(
             mime="application/zip",
             use_container_width=True
         )
-
