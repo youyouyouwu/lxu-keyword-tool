@@ -90,15 +90,16 @@ def write_feed_to_master_zip(
     uploaded_bytes: bytes,
     cfg: PackConfig,
     kw_list: List[str],
-    df_market: pd.DataFrame,   # 保留参数不改 main.py 调用，但这里不再写出全量
+    df_market: pd.DataFrame,   # 这里保留参数，不影响 main.py 调用
     final_df: pd.DataFrame,
     res1_text: str,
     res3_text: str,
+    out_root: str = "",        # ✅ 新增：控制写入 zip 的根目录
 ):
-    base = f"{folder_name}/FEED_{folder_name}"
-    slices_prefix = f"{base}/slices"
-    tables_prefix = f"{base}/tables"
-    reports_prefix = f"{base}/reports"
+    # out_root="" => 写到zip根目录；out_root="xxx" => 写到 xxx/ 下
+    prefix = out_root.strip("/").strip()
+    def p(path: str) -> str:
+        return f"{prefix}/{path}" if prefix else path
 
     # 1) 切片（基于最初上传文件）
     index_rows: List[Dict[str, Any]] = []
@@ -111,7 +112,7 @@ def write_feed_to_master_zip(
             sl = slice_vertical(rim, cfg)
             for si, (y0, simg) in enumerate(sl, start=1):
                 out_name = f"{folder_name}__p{pi:03d}__s{si:03d}.png"
-                master_zip.writestr(f"{slices_prefix}/{out_name}", _img_to_png_bytes(simg))
+                master_zip.writestr(p(f"slices/{out_name}"), _img_to_png_bytes(simg))
                 index_rows.append({
                     "source": folder_name,
                     "page": pi,
@@ -127,7 +128,7 @@ def write_feed_to_master_zip(
         sl = slice_vertical(rim, cfg)
         for si, (y0, simg) in enumerate(sl, start=1):
             out_name = f"{folder_name}__s{si:03d}.png"
-            master_zip.writestr(f"{slices_prefix}/{out_name}", _img_to_png_bytes(simg))
+            master_zip.writestr(p(f"slices/{out_name}"), _img_to_png_bytes(simg))
             index_rows.append({
                 "source": folder_name,
                 "page": "",
@@ -139,18 +140,16 @@ def write_feed_to_master_zip(
             })
 
     master_zip.writestr(
-        f"{base}/index_images.csv",
+        p("index_images.csv"),
         _dicts_to_csv_bytes(index_rows, ["source", "page", "slice", "y0", "width", "height", "file"])
     )
 
-    # 2) 表格数据化（按你要求：只保留最终表 + 第一阶段seed）
+    # 2) 表格数据化（你前面已要求：只保留最终表 + seed）
     df_seed = pd.DataFrame({"seed_keyword": kw_list})
-    master_zip.writestr(f"{tables_prefix}/keywords_seed.csv", _df_to_csv_bytes(df_seed))
+    master_zip.writestr(p("tables/keywords_seed.csv"), _df_to_csv_bytes(df_seed))
+    master_zip.writestr(p("tables/market_top.csv"), _df_to_csv_bytes(final_df))
 
-    # ✅ 你真正要喂 GPT 的“最终表”
-    master_zip.writestr(f"{tables_prefix}/market_top.csv", _df_to_csv_bytes(final_df))
-
-    # 3) schema（不再包含 market_data）
+    # 3) schema
     schema = {
         "product": folder_name,
         "source_file": uploaded_filename,
@@ -172,13 +171,13 @@ def write_feed_to_master_zip(
             "pdf_scale": cfg.pdf_scale
         }
     }
-    master_zip.writestr(f"{base}/schema.json", json.dumps(schema, ensure_ascii=False, indent=2).encode("utf-8"))
+    master_zip.writestr(p("schema.json"), json.dumps(schema, ensure_ascii=False, indent=2).encode("utf-8"))
 
-    # 4) 报告原文（保留，方便 GPT 校验）
-    master_zip.writestr(f"{reports_prefix}/res1_raw.txt", res1_text.encode("utf-8"))
-    master_zip.writestr(f"{reports_prefix}/res3_raw.txt", res3_text.encode("utf-8"))
+    # 4) reports
+    master_zip.writestr(p("reports/res1_raw.txt"), res1_text.encode("utf-8"))
+    master_zip.writestr(p("reports/res3_raw.txt"), res3_text.encode("utf-8"))
 
-    # 5) 使用说明（按你现在的结构写）
+    # 5) howto
     howto = (
         "【如何用这个喂料包给GPT分析】\n"
         "1) tables/market_top.csv：最终可用的核心数据表（优先读这个）。\n"
@@ -186,4 +185,4 @@ def write_feed_to_master_zip(
         "3) slices/：原始详情页切片（按 index_images.csv 顺序看）。\n"
         "4) reports/：Gemini原报告（用于校验理解）。\n"
     )
-    master_zip.writestr(f"{base}/HOW_TO_USE_WITH_GPT.txt", howto.encode("utf-8"))
+    master_zip.writestr(p("HOW_TO_USE_WITH_GPT.txt"), howto.encode("utf-8"))
