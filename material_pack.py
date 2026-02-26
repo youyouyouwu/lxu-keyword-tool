@@ -1,9 +1,8 @@
-# material_pack.py
 import io
 import csv
 import json
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from PIL import Image, ImageStat
 import pypdfium2 as pdfium
@@ -12,7 +11,6 @@ import pandas as pd
 
 @dataclass
 class PackConfig:
-    # --- image/pdf slicing ---
     target_w: int = 1400
     max_h: int = 1600
     min_h: int = 900
@@ -37,9 +35,9 @@ def resize_to_width(im: Image.Image, target_w: int) -> Image.Image:
     return im.resize((target_w, new_h), Image.LANCZOS)
 
 
-def pdf_to_images(pdf_bytes: bytes, scale: float) -> List[Image.Image]:
+def pdf_to_images(pdf_bytes: bytes, scale: float):
     pdf = pdfium.PdfDocument(pdf_bytes)
-    images: List[Image.Image] = []
+    images = []
     for i in range(len(pdf)):
         page = pdf[i]
         pil = page.render(scale=scale).to_pil()
@@ -47,8 +45,8 @@ def pdf_to_images(pdf_bytes: bytes, scale: float) -> List[Image.Image]:
     return images
 
 
-def slice_vertical(im: Image.Image, cfg: PackConfig) -> List[Tuple[int, Image.Image]]:
-    slices: List[Tuple[int, Image.Image]] = []
+def slice_vertical(im: Image.Image, cfg: PackConfig):
+    slices = []
     w, h = im.size
     slice_h = max(cfg.min_h, min(cfg.max_h, cfg.max_h))
     ov = int(round(slice_h * cfg.overlap))
@@ -91,26 +89,21 @@ def write_feed_to_master_zip(
     uploaded_filename: str,
     uploaded_bytes: bytes,
     cfg: PackConfig,
-    # data outputs you already have
     kw_list: List[str],
-    df_market: pd.DataFrame,
+    df_market: pd.DataFrame,   # 保留参数不改 main.py 调用，但这里不再写出全量
     final_df: pd.DataFrame,
     res1_text: str,
     res3_text: str,
 ):
-    """
-    Writes a FEED_{folder_name}/ directory into existing master_zip.
-    Does NOT change your workflow, only adds more files into same zip.
-    """
     base = f"{folder_name}/FEED_{folder_name}"
     slices_prefix = f"{base}/slices"
     tables_prefix = f"{base}/tables"
     reports_prefix = f"{base}/reports"
 
-    # 1) build image slices
+    # 1) 切片（基于最初上传文件）
     index_rows: List[Dict[str, Any]] = []
-
     ext = uploaded_filename.lower().split(".")[-1]
+
     if ext == "pdf":
         pages = pdf_to_images(uploaded_bytes, scale=cfg.pdf_scale)
         for pi, pim in enumerate(pages, start=1):
@@ -145,28 +138,24 @@ def write_feed_to_master_zip(
                 "file": f"slices/{out_name}"
             })
 
-    # 2) write index_images.csv
     master_zip.writestr(
         f"{base}/index_images.csv",
         _dicts_to_csv_bytes(index_rows, ["source", "page", "slice", "y0", "width", "height", "file"])
     )
 
-    # 3) write tables (data化)
+    # 2) 表格数据化（按你要求：只保留最终表 + 第一阶段seed）
     df_seed = pd.DataFrame({"seed_keyword": kw_list})
     master_zip.writestr(f"{tables_prefix}/keywords_seed.csv", _df_to_csv_bytes(df_seed))
 
-    # df_market: from Naver API (already has columns)
-    master_zip.writestr(f"{tables_prefix}/market_data.csv", _df_to_csv_bytes(df_market))
-
-    # final_df: seed + top expanded (you used for step3 prompt)
+    # ✅ 你真正要喂 GPT 的“最终表”
     master_zip.writestr(f"{tables_prefix}/market_top.csv", _df_to_csv_bytes(final_df))
 
+    # 3) schema（不再包含 market_data）
     schema = {
         "product": folder_name,
         "source_file": uploaded_filename,
         "tables": {
             "keywords_seed": "tables/keywords_seed.csv",
-            "market_data": "tables/market_data.csv",
             "market_top": "tables/market_top.csv",
         },
         "images": {
@@ -185,17 +174,16 @@ def write_feed_to_master_zip(
     }
     master_zip.writestr(f"{base}/schema.json", json.dumps(schema, ensure_ascii=False, indent=2).encode("utf-8"))
 
-    # 4) write reports (方便 GPT 复盘)
+    # 4) 报告原文（保留，方便 GPT 校验）
     master_zip.writestr(f"{reports_prefix}/res1_raw.txt", res1_text.encode("utf-8"))
     master_zip.writestr(f"{reports_prefix}/res3_raw.txt", res3_text.encode("utf-8"))
 
-    # 5) GPT usage guide
+    # 5) 使用说明（按你现在的结构写）
     howto = (
         "【如何用这个喂料包给GPT分析】\n"
-        "1) slices/：按 index_images.csv 从上到下阅读切片（带重叠，避免文字断裂）。\n"
-        "2) tables/：关键词与查量数据（CSV），优先让GPT以 market_top.csv 为核心筛词。\n"
-        "3) reports/：Gemini原报告，供GPT校验产品理解与否定词。\n"
-        "推荐你对GPT的指令：\n"
-        "“请先读取 tables/market_top.csv + tables/keywords_seed.csv，再结合 slices/ 的图片内容校验属性，输出可投关键词分组与否定词。”\n"
+        "1) tables/market_top.csv：最终可用的核心数据表（优先读这个）。\n"
+        "2) tables/keywords_seed.csv：第一步AI种子词（需要时参考）。\n"
+        "3) slices/：原始详情页切片（按 index_images.csv 顺序看）。\n"
+        "4) reports/：Gemini原报告（用于校验理解）。\n"
     )
     master_zip.writestr(f"{base}/HOW_TO_USE_WITH_GPT.txt", howto.encode("utf-8"))
