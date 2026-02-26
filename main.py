@@ -9,9 +9,12 @@ import hashlib
 import hmac
 import base64
 import concurrent.futures
-import io 
-import zipfile              
+import io
+import zipfile
 import markdown  # 🚀 新增：用于将文本渲染为极美网页排版
+
+# ✅ 新增：喂料包（切片+CSV）写入 master_zip
+from material_pack import PackConfig, write_feed_to_master_zip
 
 # ==========================================
 # 0. 页面与 Secrets 配置
@@ -174,10 +177,10 @@ def safe_generate(model, contents, max_retries=3):
     for attempt in range(1, max_retries + 1):
         try:
             res = model.generate_content(contents)
-            return res.text 
+            return res.text
         except Exception as e:
             if attempt < max_retries:
-                time.sleep(3) 
+                time.sleep(3)
             else:
                 return f"❌ 严重错误：API 连续 {max_retries} 次无响应或被安全拦截，无法生成内容。详情：{str(e)}"
 
@@ -214,7 +217,7 @@ def fetch_naver_data(main_keywords, pb, st_text):
             res = requests.get(NAVER_API_URL, headers=headers, params={"hintKeywords": clean_for_api(mk), "showDetail": 1}, timeout=8)
             if res.status_code == 200:
                 data = res.json()
-                for item in data.get("keywordList", []): 
+                for item in data.get("keywordList", []):
                     pc = normalize_count(item.get("monthlyPcQcCnt", 0))
                     mob = normalize_count(item.get("monthlyMobileQcCnt", 0))
                     rows.append({
@@ -239,19 +242,19 @@ def fetch_naver_data(main_keywords, pb, st_text):
                 all_rows.extend(future.result())
             except Exception:
                 pass
-            time.sleep(0.05) 
-            
+            time.sleep(0.05)
+
     df = pd.DataFrame(all_rows)
     if not df.empty:
         df = df.drop_duplicates(subset=["Naver实际搜索词"])
-        
+
         seed_no_space = [str(k).replace(" ", "") for k in main_keywords]
         df['is_seed'] = df['Naver实际搜索词'].apply(lambda x: str(x).replace(" ", "") in seed_no_space)
-        
+
         df.insert(1, '词组属性', df['is_seed'].apply(lambda x: '🎯 目标原词' if x else '💡 衍生拓展词'))
         df = df.sort_values(by=["is_seed", "月总搜索量"], ascending=[False, False])
         df = df.drop(columns=['is_seed'])
-        
+
     return df
 
 # ==========================================
@@ -274,16 +277,17 @@ files = st.file_uploader("📥 请上传产品详情页 (强烈建议截图，�
 
 if files and st.button("🚀 启动全自动闭环", use_container_width=True):
     model = genai.GenerativeModel("gemini-2.5-flash")
-    
+
     master_zip_buffer = io.BytesIO()
     master_zip = zipfile.ZipFile(master_zip_buffer, 'w', zipfile.ZIP_DEFLATED)
-    
+
     for file in files:
         st.divider()
         st.header(f"📦 正在自动处理产品：{file.name}")
         temp_path = f"temp_{file.name}"
-        with open(temp_path, "wb") as f: f.write(file.getbuffer())
-        
+        with open(temp_path, "wb") as f:
+            f.write(file.getbuffer())
+
         res1_text = ""
         res3_text = ""
         kw_list = []
@@ -297,21 +301,21 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 while gen_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
-                
+
                 res1_text = safe_generate(model, [gen_file, PROMPT_STEP_1])
-                
+
                 if res1_text.startswith("❌"):
                     s1.update(label="❌ 第一步 AI 生成彻底失败", state="error")
                     st.error(res1_text)
                     continue
-                
+
                 with st.expander("👉 查看第一步完整报告 (已强制纯中文隔离)", expanded=False):
                     st.write(res1_text)
-                
+
                 match = re.search(r"\[LXU_KEYWORDS_START\](.*?)\[LXU_KEYWORDS_END\]", res1_text, re.DOTALL | re.IGNORECASE)
                 if match:
                     raw_block = match.group(1)
-                    raw_block = re.sub(r'[，\n、|]', ',', raw_block) 
+                    raw_block = re.sub(r'[，\n、|]', ',', raw_block)
                     for kw in raw_block.split(','):
                         clean_word = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', kw).strip()
                         clean_word = re.sub(r'\s+', ' ', clean_word)
@@ -326,12 +330,12 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                         if clean_word and clean_word not in kw_list:
                             kw_list.append(clean_word)
                     kw_list = kw_list[:25]
-                
+
                 if kw_list:
                     s1.update(label=f"✅ 第一步完成！成功截获 {len(kw_list)} 个纯正韩文词组", state="complete")
                 else:
                     s1.update(label="❌ 第一步提取失败，未能找到韩文", state="error")
-                    continue 
+                    continue
             except Exception as e:
                 s1.update(label=f"❌ 本地系统逻辑错误: {e}", state="error")
                 continue
@@ -340,9 +344,9 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
         with st.status("📊 第二步：连接 Naver 获取真实搜索数据 (自动跳转)...", expanded=True) as s2:
             pb = st.progress(0)
             status_txt = st.empty()
-            
+
             df_market = fetch_naver_data(kw_list, pb, status_txt)
-            
+
             if not df_market.empty:
                 st.dataframe(df_market)
                 target_count = len(kw_list)
@@ -350,24 +354,24 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 s2.update(label=f"✅ 第二步完成！已获取最新韩国市场客观数据 (目标词：{target_count} 个 ➡️ 衍生词：{derived_count} 个)", state="complete")
             else:
                 s2.update(label="❌ 第二步失败，Naver 未返回有效数据", state="error")
-                continue 
+                continue
 
         # ------------------ 第三步：自动触发终极策略推演 ------------------
         with st.status("🧠 第三步：主客观数据融合，生成终极策略 (自动跳转)...", expanded=True) as s3:
             try:
                 seed_df = df_market[df_market["词组属性"] == '🎯 目标原词']
                 expanded_df = df_market[df_market["词组属性"] == '💡 衍生拓展词'].head(250)
-                
+
                 final_df = pd.concat([
-                    seed_df.sort_values(by="月总搜索量", ascending=False), 
+                    seed_df.sort_values(by="月总搜索量", ascending=False),
                     expanded_df.sort_values(by="月总搜索量", ascending=False)
                 ]).drop_duplicates(subset=["Naver实际搜索词"])
-                
+
                 market_csv = final_df.to_csv(index=False)
                 final_prompt = PROMPT_STEP_3.format(market_data=market_csv)
-                
+
                 res3_text = safe_generate(model, [gen_file, final_prompt])
-                
+
                 if res3_text.startswith("❌"):
                     s3.update(label="❌ 第三步 AI 生成彻底失败", state="error")
                     st.error(res3_text)
@@ -384,7 +388,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
             genai.delete_file(gen_file.name)
         except:
             pass
-            
+
         try:
             # === 解析与提炼 ===
             def parse_md_table(md_text, keyword):
@@ -402,15 +406,15 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                             if '---' not in line:
                                 table_data.append(line)
                         else:
-                            if len(line.strip()) > 0: 
+                            if len(line.strip()) > 0:
                                 break
                 if not table_data:
                     return pd.DataFrame()
                 parsed_rows = []
                 for row in table_data:
                     cols = [col.strip() for col in row.split('|')]
-                    if cols and not cols[0]: cols = cols[1:]   
-                    if cols and not cols[-1]: cols = cols[:-1] 
+                    if cols and not cols[0]: cols = cols[1:]
+                    if cols and not cols[-1]: cols = cols[:-1]
                     parsed_rows.append(cols)
                 if len(parsed_rows) > 1:
                     return pd.DataFrame(parsed_rows[1:], columns=parsed_rows[0])
@@ -424,19 +428,19 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     clean_t = clean_t.strip('`*>- \t')
                     if clean_t.startswith('LxU') and clean_t not in raw_titles:
                         raw_titles.append(clean_t)
-            
+
             coupang_title = raw_titles[0] if len(raw_titles) > 0 else "未提取到 Coupang 标题，请查阅全景报告"
             naver_title = raw_titles[1] if len(raw_titles) > 1 else "未提取到 Naver 标题，请查阅全景报告"
 
             kw_lines = []
             for line in res1_text.split('\n'):
                 if ('，' in line or ',' in line) and '|' not in line and re.search(r'[가-힣]', line):
-                    if line.count(',') + line.count('，') >= 5: 
+                    if line.count(',') + line.count('，') >= 5:
                         clean_kw = re.sub(r'```[a-zA-Z]*', '', line).strip()
                         clean_kw = clean_kw.strip('`').strip()
                         if clean_kw and clean_kw not in kw_lines:
                             kw_lines.append(clean_kw)
-            
+
             coupang_kws = kw_lines[0] if len(kw_lines) > 0 else "未提取到 Coupang 关键词，请查阅全景报告"
             naver_kws = kw_lines[1] if len(kw_lines) > 1 else "未提取到 Naver 关键词，请查阅全景报告"
 
@@ -480,8 +484,7 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 @media print { .print-btn { display: none; } body { background-color: white; } .container { box-shadow: none; padding: 0; } }
             </style>
             """
-            
-            # 使用 markdown 库将 AI 生成的文本转换为 HTML 表格和排版
+
             html_part1 = markdown.markdown(res1_text, extensions=['tables', 'fenced_code'])
             html_part3 = markdown.markdown(res3_text, extensions=['tables', 'fenced_code'])
 
@@ -498,43 +501,61 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                     <button class="print-btn" onclick="window.print()">🖨️ 保存为高质量 PDF</button>
                     <h1>📊 LxU 测品全景报告</h1>
                     <p style="text-align: center; color: #64748b;">报告归属产品：{folder_name} | 生成日期：自动记录</p>
-                    
+
                     <h2>🔍 第一步：AI 视觉提炼与本地化分析</h2>
                     {html_part1}
-                    
+
                     <hr style="border: 1px dashed #cbd5e1; margin: 40px 0;">
-                    
+
                     <h2>🧠 第三步：产品深度解析与终极广告策略</h2>
                     {html_part3}
                 </div>
             </body>
             </html>
             """
-            
+
+            # ✅ 新增：写入 FEED 喂料包（切片 + CSV），不改变原有运行逻辑
+            pack_cfg = PackConfig(
+                target_w=1400,
+                max_h=1600,
+                min_h=900,
+                overlap=0.12,
+                skip_blank=True,
+                pdf_scale=2.0
+            )
+            write_feed_to_master_zip(
+                master_zip=master_zip,
+                folder_name=folder_name,
+                uploaded_filename=file.name,
+                uploaded_bytes=file.getvalue(),
+                cfg=pack_cfg,
+                kw_list=kw_list,
+                df_market=df_market,
+                final_df=final_df,
+                res1_text=res1_text,
+                res3_text=res3_text
+            )
+
             # === 将生成的 Excel 和 HTML 网页写入主 ZIP 包 ===
             master_zip.writestr(f"{folder_name}/LxU_数据表_{folder_name}.xlsx", excel_data)
-            # 存为 .html 后缀
             master_zip.writestr(f"{folder_name}/LxU_视觉报告_{folder_name}.html", html_content.encode('utf-8'))
-            
+
             st.success(f"📦 【{file.name}】 处理完毕！已打包存入内存。")
-            
+
         except Exception as e:
             st.error(f"处理 {file.name} 构建导出文件时发生错误: {e}")
 
     # ==========================================
     # 4. 循环结束后，提供统一大压缩包下载
     # ==========================================
-    master_zip.close() # 关闭ZIP写入流
+    master_zip.close()
     if files:
         st.divider()
         st.markdown("### 🎉 全部产品处理完成！")
         st.download_button(
-            label=f"📥 一键下载全部结果 (ZIP 压缩包)", 
-            data=master_zip_buffer.getvalue(), 
+            label="📥 一键下载全部结果 (ZIP 压缩包)",
+            data=master_zip_buffer.getvalue(),
             file_name="LxU_批量测品结果合集.zip",
             mime="application/zip",
             use_container_width=True
         )
-
-
-
