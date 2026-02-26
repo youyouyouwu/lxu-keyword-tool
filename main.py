@@ -529,8 +529,9 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 pdf_scale=2.0
             )
 
+            # ✅ 关键修改：out_root="" 写入 FEED.zip 根目录
             write_feed_to_master_zip(
-                master_zip=feed_zip,  # ⚠️ 这里是 feed_zip，不是 master_zip
+                master_zip=feed_zip,
                 folder_name=folder_name,
                 uploaded_filename=file.name,
                 uploaded_bytes=file.getvalue(),
@@ -539,7 +540,8 @@ if files and st.button("🚀 启动全自动闭环", use_container_width=True):
                 df_market=df_market,
                 final_df=final_df,
                 res1_text=res1_text,
-                res3_text=res3_text
+                res3_text=res3_text,
+                out_root=""
             )
 
             feed_zip.close()
